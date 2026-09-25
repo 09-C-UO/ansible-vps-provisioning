@@ -1,0 +1,280 @@
+---
+# One-time bootstrap of a fresh server, from any provider.
+# Normally launched by provision.sh, which first runs:
+#   ssh-copy-id -i <admin.pub> <bootstrap_user>@<IP>
+#
+# Sequence (root access is only removed after admin is proven to work):
+#   1. provider account (port 22)  -> create admin + deploy, one key each
+#   2. admin (port 22)             -> sshd listens on 22 AND ssh_port
+#   3. admin (ssh_port)            -> close 22, lock root, remove the bootstrap key
+
+- name: Prepare the control machine
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    target_host: "{{ hostvars[groups['vps'][0]].ansible_host }}"
+
+  tasks:
+    - name: Verify both SSH key pairs exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: key_files
+      loop:
+        - "{{ admin_ssh_key }}"
+        - "{{ admin_ssh_key }}.pub"
+        - "{{ deploy_ssh_key }}"
+        - "{{ deploy_ssh_key }}.pub"
+      failed_when: not key_files.stat.exists
+
+    - name: Ensure the local SSH config exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.ssh/config"
+        state: touch
+        mode: '0600'
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Configure the admin and deploy SSH aliases
+      ansible.builtin.blockinfile:
+        path: "{{ lookup('env', 'HOME') }}/.ssh/config"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: {{ ssh_alias_prefix }}"
+        block: |
+          Host {{ ssh_alias_prefix }}-admin
+              HostName {{ target_host }}
+              Port {{ ssh_port }}
+              User {{ admin_user }}
+              IdentityFile {{ admin_ssh_key }}
+              IdentitiesOnly yes
+
+          Host {{ ssh_alias_prefix }}-deploy
+              HostName {{ target_host }}
+              Port {{ ssh_port }}
+              User {{ deploy_user }}
+              IdentityFile {{ deploy_ssh_key }}
+              IdentitiesOnly yes
+        mode: '0600'
+
+- name: Create the accounts through the provider's initial access
+  hosts: vps
+  # root has no sudo on some minimal images; other provider users need it.
+  become: "{{ bootstrap_user != 'root' }}"
+  gather_facts: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    ansible_port: "{{ bootstrap_ssh_port }}"
+
+  pre_tasks:
+    - name: Refuse to bootstrap an unsupported operating system
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] is version('22.04', '>=')
+        fail_msg: This bootstrap supports Ubuntu 22.04 LTS or newer.
+
+    - name: Refuse an admin password salt that would break idempotence
+      ansible.builtin.assert:
+        that:
+          - vault_admin_password_salt is match('^[a-zA-Z0-9./]{16}$')
+          - vault_admin_password | length >= 12
+        fail_msg: >-
+          vault_admin_password must be 12+ characters and vault_admin_password_salt
+          exactly 16 characters from [a-zA-Z0-9./].
+        quiet: true
+
+  tasks:
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+
+    - name: Create the admin account (sudo requires its password)
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+        password: "{{ vault_admin_password | password_hash('sha512', vault_admin_password_salt) }}"
+        update_password: always
+        state: present
+      no_log: true
+
+    - name: Create the deploy account (no password, no sudo)
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        shell: /bin/bash
+        create_home: true
+        password_lock: true
+        state: present
+
+    - name: Install one dedicated public key per account
+      ansible.posix.authorized_key:
+        user: "{{ item.user }}"
+        key: "{{ lookup('ansible.builtin.file', item.key + '.pub') }}"
+        state: present
+        exclusive: true
+        manage_dir: true
+      loop:
+        - { user: "{{ admin_user }}", key: "{{ admin_ssh_key }}" }
+        - { user: "{{ deploy_user }}", key: "{{ deploy_ssh_key }}" }
+      loop_control:
+        label: "{{ item.user }}"
+
+    - name: Remove any passwordless sudo rule for admin
+      ansible.builtin.file:
+        path: /etc/sudoers.d/90-ansible-admin
+        state: absent
+
+- name: Open the new SSH port through admin
+  hosts: vps
+  become: true
+  gather_facts: false
+  vars:
+    ansible_port: "{{ bootstrap_ssh_port }}"
+    sshd_ports:
+      - "{{ bootstrap_ssh_port }}"
+      - "{{ ssh_port }}"
+    known_host_name: >-
+      {{ ansible_host if ssh_port | int == 22
+         else '[' ~ ansible_host ~ ']:' ~ ssh_port }}
+
+  tasks:
+    - name: Prove that a new admin SSH connection works
+      ansible.builtin.ping:
+
+    - name: Prove that admin can become root with its password
+      ansible.builtin.command: /usr/bin/id -u
+      register: bootstrap_root_id
+      changed_when: false
+      failed_when: bootstrap_root_id.stdout != '0'
+
+    - name: Ensure UFW is installed
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    - name: Allow the new SSH port before sshd listens on it
+      community.general.ufw:
+        rule: limit
+        port: "{{ ssh_port | string }}"
+        proto: tcp
+        from_ip: "{{ item }}"
+        comment: Managed SSH access
+      loop: "{{ ssh_allowed_cidrs if ssh_allowed_cidrs | length > 0 else ['any'] }}"
+
+    # With socket activation (Ubuntu 24.04) /run/sshd may not exist yet, and
+    # sshd -t refuses to validate without it.
+    - name: Ensure the sshd privilege separation directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Make sshd listen on the old and the new port
+      ansible.builtin.template:
+        src: templates/sshd_hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-ansible-hardening.conf
+        owner: root
+        group: root
+        mode: '0644'
+        validate: /usr/sbin/sshd -t -f %s
+      register: sshd_transition
+
+    - name: Validate the complete SSH configuration
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Apply the SSH ports
+      ansible.builtin.include_tasks: tasks/sshd_apply.yml
+      when: sshd_transition.changed
+
+    # The host key is read through the already-verified port 22 connection, so
+    # trusting it for the new port does not weaken host key checking.
+    - name: Read the server's Ed25519 host key
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: server_host_key
+
+    - name: Trust the same host key on the new port
+      ansible.builtin.known_hosts:
+        name: "{{ known_host_name }}"
+        key: "{{ known_host_name }} {{ (server_host_key.content | b64decode).split()[:2] | join(' ') }}"
+        state: present
+      delegate_to: localhost
+      become: false
+
+- name: Close the bootstrap access
+  hosts: vps
+  become: true
+  gather_facts: false
+  vars:
+    sshd_ports:
+      - "{{ ssh_port }}"
+
+  tasks:
+    - name: Prove that admin works on the new SSH port
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
+    - name: Prove that admin can still become root
+      ansible.builtin.command: /usr/bin/id -u
+      register: final_root_id
+      changed_when: false
+      failed_when: final_root_id.stdout != '0'
+
+    # With socket activation (Ubuntu 24.04) /run/sshd may not exist yet, and
+    # sshd -t refuses to validate without it.
+    - name: Ensure the sshd privilege separation directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Make sshd listen only on the new port
+      ansible.builtin.template:
+        src: templates/sshd_hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-ansible-hardening.conf
+        owner: root
+        group: root
+        mode: '0644'
+        validate: /usr/sbin/sshd -t -f %s
+      register: sshd_final
+
+    - name: Apply the SSH ports
+      ansible.builtin.include_tasks: tasks/sshd_apply.yml
+      when: sshd_final.changed
+
+    - name: Remove firewall rules for the bootstrap SSH port
+      community.general.ufw:
+        rule: "{{ item }}"
+        port: "{{ bootstrap_ssh_port | string }}"
+        proto: tcp
+        delete: true
+      loop:
+        - limit
+        - allow
+      when: bootstrap_ssh_port | int != ssh_port | int
+
+    - name: Remove the bootstrap key from the provider account
+      ansible.posix.authorized_key:
+        user: "{{ bootstrap_user }}"
+        key: "{{ lookup('ansible.builtin.file', admin_ssh_key + '.pub') }}"
+        state: absent
+
+    - name: Lock the root password
+      ansible.builtin.user:
+        name: root
+        password_lock: true
+
+    - name: Confirm the bootstrap result
+      ansible.builtin.debug:
+        msg: >-
+          Bootstrap complete. Root SSH is disabled, SSH listens on {{ ssh_port }}.
+          Connect with: ssh {{ ssh_alias_prefix }}-admin / ssh {{ ssh_alias_prefix }}-deploy

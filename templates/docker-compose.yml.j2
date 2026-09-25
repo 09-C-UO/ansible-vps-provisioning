@@ -1,0 +1,47 @@
+# Managed by Ansible.
+name: traefik
+
+services:
+  traefik:
+    image: {{ traefik_image }}
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./users.htpasswd:/etc/traefik/users.htpasswd:ro
+      - ./acme:/acme
+      - ./logs:/logs
+    networks:
+      - edge
+
+  # Serves the files deploy puts in {{ application_root }}/coucou, as deploy's
+  # uid, read-only, and without any published port.
+  coucou:
+    image: {{ coucou_image }}
+    restart: unless-stopped
+    user: "{{ deploy_uid }}:{{ deploy_gid }}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    volumes:
+      - {{ application_root }}/coucou:/usr/share/nginx/html:ro
+    networks:
+      - edge
+
+networks:
+  edge: {}

@@ -1,0 +1,48 @@
+# Managed by Ansible. Static Traefik configuration (read at start only).
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+# Common Log Format in a file: fail2ban reads it to ban BasicAuth brute force.
+accessLog:
+  filePath: /logs/access.log
+  format: common
+
+# Traefik runs as an unprivileged user, so it listens on high ports inside the
+# container; Docker publishes them as 80 and 443.
+entryPoints:
+  web:
+    address: ":8080"
+    http:
+      redirections:
+        entryPoint:
+          to: ":443"
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":8443"
+    http:
+      tls:
+        certResolver: le
+
+# Routes come from a file: the Docker socket is never mounted into Traefik.
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: false
+
+certificatesResolvers:
+  le:
+    acme:
+{% if traefik_acme_email | length > 0 %}
+      email: "{{ traefik_acme_email }}"
+{% endif %}
+      storage: /acme/acme.json
+{% if traefik_acme_staging | bool %}
+      caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+{% endif %}
+      httpChallenge:
+        entryPoint: web

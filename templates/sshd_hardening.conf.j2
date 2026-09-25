@@ -1,0 +1,36 @@
+# Managed by Ansible. Loaded before the distribution defaults, so these win.
+{% for port in sshd_ports | unique %}
+Port {{ port }}
+{% endfor %}
+
+# Modern cryptography only (checked with ssh-audit). NIST curves, SHA-1 and
+# encrypt-and-MAC modes are refused; sntrup761 adds post-quantum key exchange.
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+PubkeyAcceptedAlgorithms ssh-ed25519,sk-ssh-ed25519@openssh.com,rsa-sha2-512,rsa-sha2-256
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com
+
+# Logs the fingerprint of the key used by every login.
+LogLevel VERBOSE
+
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+X11Forwarding no
+AllowAgentForwarding no
+PermitTunnel no
+MaxAuthTries 3
+MaxSessions 4
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowUsers {{ admin_user }} {{ deploy_user }}
+
+Match User {{ deploy_user }}
+    AllowTcpForwarding no
+    X11Forwarding no

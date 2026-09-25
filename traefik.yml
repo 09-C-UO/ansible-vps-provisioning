@@ -1,0 +1,266 @@
+---
+- name: Deploy Traefik with BasicAuth in front of the coucou page
+  hosts: vps
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Verify Docker is part of this deployment
+      ansible.builtin.assert:
+        that:
+          - install_docker | bool
+        fail_msg: traefik.yml needs install_docker=true (see hardening.yml).
+        quiet: true
+
+  tasks:
+    - name: Install the libraries used to write the htpasswd file
+      ansible.builtin.apt:
+        name:
+          - python3-bcrypt
+          - python3-passlib
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Read the deploy account identifiers
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ deploy_user }}"
+
+    - name: Record the deploy uid and gid for the coucou container
+      ansible.builtin.set_fact:
+        deploy_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
+        deploy_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
+
+    - name: Create the root-owned Traefik directory
+      ansible.builtin.file:
+        path: "{{ traefik_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Create the ACME storage directory for the Traefik user
+      ansible.builtin.file:
+        path: "{{ traefik_root }}/acme"
+        state: directory
+        owner: '65534'
+        group: '65534'
+        mode: '0700'
+
+    # Traefik refuses an acme.json that is readable by anyone else.
+    - name: Create the ACME certificate store
+      ansible.builtin.copy:
+        dest: "{{ traefik_root }}/acme/acme.json"
+        content: ""
+        force: false
+        owner: '65534'
+        group: '65534'
+        mode: '0600'
+
+    - name: Create the access log directory for the Traefik user
+      ansible.builtin.file:
+        path: "{{ traefik_root }}/logs"
+        state: directory
+        owner: '65534'
+        group: '65534'
+        mode: '0750'
+
+    # Created up front so the fail2ban jail can start before the first request.
+    - name: Create the access log file
+      ansible.builtin.copy:
+        dest: "{{ traefik_root }}/logs/access.log"
+        content: ""
+        force: false
+        owner: '65534'
+        group: '65534'
+        mode: '0640'
+
+    - name: Rotate the Traefik access log
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/traefik
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          {{ traefik_root }}/logs/access.log {
+              su nobody nogroup
+              daily
+              rotate 14
+              compress
+              delaycompress
+              missingok
+              notifempty
+              copytruncate
+          }
+
+    - name: Write the BasicAuth users file
+      community.general.htpasswd:
+        path: "{{ traefik_root }}/users.htpasswd"
+        name: "{{ traefik_basic_auth_user }}"
+        password: "{{ traefik_basic_auth_password }}"
+        crypt_scheme: bcrypt
+        owner: root
+        group: '65534'
+        mode: '0640'
+      no_log: true
+      notify: Restart Traefik
+
+    - name: Write the Traefik configuration
+      ansible.builtin.template:
+        src: "templates/{{ item.src }}"
+        dest: "{{ traefik_root }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { src: traefik.static.yml.j2, dest: traefik.yml }
+        - { src: traefik.dynamic.yml.j2, dest: dynamic.yml }
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+      loop_control:
+        label: "{{ item.dest }}"
+      notify: Restart Traefik
+
+    - name: Create the coucou content directory owned by deploy
+      ansible.builtin.file:
+        path: "{{ application_root }}/coucou"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0750'
+
+    # force: false keeps whatever deploy has pushed since the first run.
+    - name: Publish the initial coucou page
+      ansible.builtin.copy:
+        src: files/index.html
+        dest: "{{ application_root }}/coucou/index.html"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0644'
+        force: false
+
+    - name: Start the Traefik stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ traefik_root }}"
+        state: present
+        pull: missing
+
+    - name: Detect failed BasicAuth logins in the access log
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/filter.d/traefik-auth.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by Ansible. Traefik Common Log Format, HTTP 401 responses.
+          # fail2ban strips the timestamp before matching, leaving "[]".
+          [Definition]
+          failregex = ^<HOST> \S+ \S+ \[\] "[^"]*" 401\s
+          ignoreregex =
+      notify: Restart Fail2ban
+
+    # Published Docker ports bypass UFW's INPUT chain, so a UFW ban would not
+    # block anything here: the ban goes into DOCKER-USER, which Docker keeps
+    # in front of the traffic it forwards to containers.
+    - name: Ban BasicAuth brute force before it reaches Traefik
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/traefik-auth.local
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [traefik-auth]
+          enabled = true
+          backend = polling
+          filter = traefik-auth
+          logpath = {{ traefik_root }}/logs/access.log
+          action = iptables-allports[name=traefik-auth, chain="DOCKER-USER", blocktype=DROP]
+          maxretry = 5
+          findtime = 10m
+          bantime = 1h
+          bantime.increment = true
+          ignoreip = 127.0.0.1/8 ::1 {{ ssh_allowed_cidrs | join(' ') }}
+      notify: Restart Fail2ban
+
+    - name: Create the fail2ban systemd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/fail2ban.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # The DOCKER-USER chain only exists once Docker is up.
+    - name: Start fail2ban after Docker
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fail2ban.service.d/after-docker.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          After=docker.service
+      notify: Restart Fail2ban
+
+    - name: Audit changes to the Traefik configuration
+      ansible.builtin.copy:
+        dest: /etc/audit/rules.d/60-traefik.rules
+        owner: root
+        group: root
+        mode: '0640'
+        content: |
+          ## Managed by Ansible.
+          -w {{ traefik_root }}/ -p wa -k traefik
+      notify: Load audit rules
+
+  post_tasks:
+    # Handlers run first so a configuration change is live before the checks.
+    - name: Apply pending restarts
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check that the page refuses anonymous visitors
+      ansible.builtin.uri:
+        url: "https://{{ traefik_effective_domain }}/"
+        status_code: 401
+        validate_certs: "{{ not (traefik_acme_staging | bool) }}"
+      register: anonymous_check
+      # The first certificate can take a minute to be issued.
+      retries: 18
+      delay: 10
+      until: anonymous_check.status == 401
+      delegate_to: localhost
+      become: false
+
+    - name: Check that the page answers coucou with credentials
+      ansible.builtin.uri:
+        url: "https://{{ traefik_effective_domain }}/"
+        url_username: "{{ traefik_basic_auth_user }}"
+        url_password: "{{ traefik_basic_auth_password }}"
+        force_basic_auth: true
+        return_content: true
+        validate_certs: "{{ not (traefik_acme_staging | bool) }}"
+      register: authenticated_check
+      failed_when: "'coucou' not in authenticated_check.content"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+    - name: Show the result
+      ansible.builtin.debug:
+        msg: "https://{{ traefik_effective_domain }}/ serves coucou behind BasicAuth ({{ traefik_basic_auth_user }})."
+
+  handlers:
+    - name: Restart Traefik
+      community.docker.docker_compose_v2:
+        project_src: "{{ traefik_root }}"
+        state: restarted
+
+    - name: Restart Fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        state: restarted
+        daemon_reload: true
+
+    - name: Load audit rules
+      ansible.builtin.command: /usr/sbin/augenrules --load
+      changed_when: true

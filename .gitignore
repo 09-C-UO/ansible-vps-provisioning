@@ -1,0 +1,6 @@
+# Secrets (encrypted or not, they never leave this machine)
+*.vault.yml
+
+# Local SSH material (keys belong in ~/.ssh, never in this repository)
+*.pem
+id_*

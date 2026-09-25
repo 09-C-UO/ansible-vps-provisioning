@@ -1,0 +1,28 @@
+---
+# Makes sshd listen on the ports written in its config.
+# Ubuntu 22.10+ starts sshd through ssh.socket: the listening ports are generated
+# from sshd_config at daemon-reload, and only a socket restart applies them.
+# Existing sessions survive both paths.
+
+- name: Detect whether sshd is socket-activated
+  ansible.builtin.command: /usr/bin/systemctl is-active ssh.socket
+  register: sshd_socket_state
+  changed_when: false
+  failed_when: false
+
+- name: Regenerate the ssh.socket listening ports from sshd_config
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: sshd_socket_state.stdout == 'active'
+
+- name: Restart ssh.socket to listen on the configured ports
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: restarted
+  when: sshd_socket_state.stdout == 'active'
+
+- name: Restart sshd to listen on the configured ports
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: restarted
+  when: sshd_socket_state.stdout != 'active'

@@ -1,0 +1,66 @@
+---
+# --- Accounts -----------------------------------------------------------------
+admin_user: admin
+deploy_user: deploy
+
+# Account the provider gives you on a fresh server: root (Linode, Hetzner,
+# DigitalOcean...) or ubuntu (AWS, OVH). Only used by bootstrap.yml.
+bootstrap_user: root
+
+# Two distinct keys: one per account. Private keys stay on this machine.
+ssh_key_dir: "{{ lookup('env', 'HOME') }}/.ssh/ansible-linode/traeffik-forward-proxy"
+admin_ssh_key: "{{ ssh_key_dir }}/admin"
+deploy_ssh_key: "{{ ssh_key_dir }}/deploy"
+
+# Aliases written to ~/.ssh/config: `ssh traefik-test-admin`, `ssh traefik-test-deploy`.
+ssh_alias_prefix: traefik-test
+
+# --- Connection (every run after bootstrap) --------------------------------------
+ansible_user: "{{ admin_user }}"
+ansible_ssh_private_key_file: "{{ admin_ssh_key }}"
+ansible_port: "{{ ssh_port }}"
+# admin needs its password for sudo; Ansible reads it from the vault.
+ansible_become_password: "{{ vault_admin_password }}"
+
+# --- SSH / firewall ------------------------------------------------------------
+# Port used on a fresh server; bootstrap.yml moves SSH from it to ssh_port.
+bootstrap_ssh_port: 22
+ssh_port: 22222
+
+# Leave empty to allow rate-limited SSH from anywhere. For stronger restriction,
+# pass a CIDR to provision.sh with -c (your machine must be inside it).
+ssh_allowed_cidrs: []
+
+# Only open ports that every deployed application is expected to use.
+public_tcp_ports:
+  - 80
+  - 443
+
+# --- System --------------------------------------------------------------------
+application_root: /srv/apps
+apply_package_upgrades: true
+automatic_reboot: false
+automatic_reboot_time: "04:30"
+
+# Docker is installed for application hosting, but neither admin nor deploy is
+# added to the docker group. Admin must use sudo; deploy cannot control Docker.
+install_docker: true
+
+# --- Traefik -------------------------------------------------------------------
+traefik_root: /opt/traefik
+traefik_image: traefik:v3.5
+coucou_image: nginxinc/nginx-unprivileged:1.28-alpine
+
+# Empty = <ip-with-dashes>.sslip.io (public DNS that resolves to the IP itself).
+# Own domain: set e.g. coucou.example.com with an A record in "DNS only" mode.
+traefik_domain: ""
+traefik_acme_email: ""
+# true = Let's Encrypt staging (untrusted certs, no rate limits) for repeated tests.
+traefik_acme_staging: false
+
+traefik_basic_auth_user: admin
+# traefik_basic_auth_password comes from group_vars/all/secrets.vault.yml.
+
+traefik_effective_domain: >-
+  {{ traefik_domain if traefik_domain | length > 0
+     else (ansible_host | replace('.', '-')) ~ '.sslip.io' }}

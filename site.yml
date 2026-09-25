@@ -1,0 +1,6 @@
+---
+# Everything after bootstrap. Safe to re-run at any time (connects as admin).
+- name: Apply the VPS security baseline
+  ansible.builtin.import_playbook: hardening.yml
+- name: Deploy Traefik and the coucou page
+  ansible.builtin.import_playbook: traefik.yml
