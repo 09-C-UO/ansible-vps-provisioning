@@ -1,0 +1,34 @@
+#!/bin/bash
+# Monthly: restore every database dump from the latest snapshot into a
+# throwaway PostgreSQL container (no network) and query it. A backup that was
+# never restored is only a hope.
+. /usr/local/lib/backup-lib.sh
+
+work="$(mktemp -d /var/tmp/restore-test.XXXXXX)"
+cleanup() {
+    docker rm -f restore-test >/dev/null 2>&1 || true
+    rm -rf "$work"
+}
+trap cleanup EXIT
+
+for entry in "${DATABASES[@]}"; do
+    read -r app service user database <<<"$entry"
+    restic dump latest "/var/backups/postgres/$app.dump" >"$work/$app.dump"
+    image="$(docker inspect -f '{{.Config.Image}}' "$(service_container "$app" "$service")")"
+    chmod 0755 "$work" && chmod 0644 "$work/$app.dump"
+    docker run -d --name restore-test --network none \
+        -e POSTGRES_PASSWORD=restore-test -e POSTGRES_USER="$user" -e POSTGRES_DB="$database" \
+        -v "$work:/restore:ro" "$image" >/dev/null
+    for _ in $(seq 60); do
+        docker exec restore-test pg_isready -U "$user" -d "$database" -q && break
+        sleep 1
+    done
+    # The entrypoint restarts the server once after initialisation.
+    sleep 3
+    docker exec restore-test pg_isready -U "$user" -d "$database" -q
+    docker exec restore-test pg_restore --no-owner -U "$user" -d "$database" "/restore/$app.dump"
+    tables="$(docker exec restore-test psql -U "$user" -d "$database" -Atc \
+        "select count(*) from information_schema.tables where table_schema = 'public'")"
+    echo "restore test $app: OK, $tables tables in public"
+    docker rm -f restore-test >/dev/null
+done

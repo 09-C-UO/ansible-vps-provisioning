@@ -1,0 +1,33 @@
+---
+# Encrypted, deduplicated backups with restic, to any S3-compatible storage
+# (Backblaze B2, Scaleway, OVH Object Storage...) at another provider.
+backup_enabled: false
+
+# e.g. s3:https://s3.eu-central-003.backblazeb2.com/my-bucket/app-prod
+restic_repository: ""
+# From the vault: restic_password (encryption key: lose it, lose the backups),
+# restic_s3_access_key, restic_s3_secret_key.
+restic_s3_access_key: ""
+restic_s3_secret_key: ""
+# Extra variables for restic, e.g. { AWS_DEFAULT_REGION: eu-central-003 }.
+restic_extra_env: {}
+
+backup_paths:
+  - /etc
+  - "{{ apps_root }}"
+  - "{{ application_root }}"
+  - "{{ traefik_root }}/acme"
+  - /var/lib/aide
+  - /var/backups/postgres
+
+# Retention applied by `restic forget --prune`.
+backup_keep_daily: 7
+backup_keep_weekly: 4
+backup_keep_monthly: 6
+# false when the server's key cannot delete (append-only protection): prune
+# then runs from the workstation with scripts/backup-prune.sh.
+backup_prune_on_server: true
+
+backup_schedule: "*-*-* 03:15:00"
+backup_check_schedule: "Sun *-*-* 05:00:00"
+backup_restore_test_schedule: "*-*-01 06:00:00"

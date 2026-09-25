@@ -1,0 +1,120 @@
+---
+# Without recommends: rkhunter would otherwise pull in a local mail server.
+- name: Install AIDE and rkhunter
+  ansible.builtin.apt:
+    name:
+      - aide
+      - aide-common
+      - rkhunter
+    state: present
+    install_recommends: false
+    cache_valid_time: 3600
+
+- name: Exclude the paths that change by design from AIDE
+  ansible.builtin.template:
+    src: aide-exclusions.j2
+    dest: /etc/aide/aide.conf.d/99_local_exclusions
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure rkhunter
+  ansible.builtin.copy:
+    src: rkhunter.conf.local
+    dest: /etc/rkhunter.conf.local
+    owner: root
+    group: root
+    mode: '0644'
+
+# The package's own jobs mail root; our timers alert Discord instead.
+- name: Disable the rkhunter package jobs
+  ansible.builtin.lineinfile:
+    path: /etc/default/rkhunter
+    regexp: "^{{ item.key }}="
+    line: '{{ item.key }}="{{ item.value }}"'
+  loop:
+    - { key: CRON_DAILY_RUN, value: "false" }
+    - { key: CRON_DB_UPDATE, value: "false" }
+    # Refreshes rkhunter's file properties after each apt run: the new files
+    # come from signed packages, and PKGMGR=DPKG checks them against dpkg.
+    - { key: APT_AUTOGEN, value: "true" }
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Record rkhunter's reference file properties
+  ansible.builtin.command: rkhunter --propupd --nocolors
+  args:
+    creates: /var/lib/rkhunter/db/rkhunter.dat
+
+- name: Find the AIDE jobs shipped by the package
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/dailyaidecheck.timer
+  register: package_aide_timer
+
+- name: Disable the AIDE package timer
+  ansible.builtin.systemd_service:
+    name: dailyaidecheck.timer
+    state: stopped
+    enabled: false
+  when: package_aide_timer.stat.exists
+
+- name: Install the integrity check scripts
+  ansible.builtin.copy:
+    src: "{{ item }}-check"
+    dest: "/usr/local/sbin/{{ item }}-check"
+    owner: root
+    group: root
+    mode: '0750'
+  loop: [aide, rkhunter]
+
+- name: Install the integrity check units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - aide-check.service
+    - aide-check.timer
+    - rkhunter-check.service
+    - rkhunter-check.timer
+  register: integrity_units
+
+- name: Reload systemd for the integrity units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: integrity_units.changed
+
+- name: Schedule the integrity checks
+  ansible.builtin.systemd_service:
+    name: "{{ item }}-check.timer"
+    state: started
+    enabled: true
+  loop: [aide, rkhunter]
+
+# Last on purpose: the baseline must include everything this run configured.
+# Several minutes on the first run.
+- name: Build the first AIDE baseline
+  ansible.builtin.command: aideinit --yes --force
+  args:
+    creates: /var/lib/aide/aide.db
+
+- name: Accept the current state as the new AIDE baseline
+  when: aide_accept | bool
+  block:
+    - name: Compute the new AIDE database
+      ansible.builtin.command: aide --config /etc/aide/aide.conf --update
+      register: aide_update
+      # 0-7: done (non-zero only says that differences were found).
+      failed_when: aide_update.rc > 7
+      changed_when: true
+
+    - name: Replace the AIDE baseline
+      ansible.builtin.copy:
+        src: /var/lib/aide/aide.db.new
+        dest: /var/lib/aide/aide.db
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'

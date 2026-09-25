@@ -6,16 +6,32 @@ global:
 log:
   level: INFO
 
-# Common Log Format in a file: fail2ban reads it to ban BasicAuth brute force.
+# fail2ban reads this file to ban BasicAuth brute force.
 accessLog:
   filePath: /logs/access.log
+{% if edge_proxy == 'cloudflare' %}
+  # Behind Cloudflare the TCP peer is Cloudflare. The visitor's address is in
+  # CF-Connecting-IP (set by Cloudflare, not by the visitor), which only the
+  # JSON format can record.
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        Cf-Connecting-Ip: keep
+{% else %}
   format: common
+{% endif %}
 
 # Traefik runs as an unprivileged user, so it listens on high ports inside the
 # container; Docker publishes them as 80 and 443.
 entryPoints:
   web:
     address: ":8080"
+{% if edge_proxy == 'cloudflare' %}
+    forwardedHeaders:
+      trustedIPs: {{ (cloudflare_ipv4_ranges + cloudflare_ipv6_ranges) | to_json }}
+{% endif %}
     http:
       redirections:
         entryPoint:
@@ -24,16 +40,26 @@ entryPoints:
           permanent: true
   websecure:
     address: ":8443"
+{% if edge_proxy == 'cloudflare' %}
+    forwardedHeaders:
+      trustedIPs: {{ (cloudflare_ipv4_ranges + cloudflare_ipv6_ranges) | to_json }}
+{% endif %}
     http:
       tls:
+{% if traefik_acme_enabled | bool %}
         certResolver: le
+{% else %}
+        {}
+{% endif %}
 
-# Routes come from a file: the Docker socket is never mounted into Traefik.
+# Routes come from files: the Docker socket is never mounted into Traefik.
+# The directory is watched, so adding an application needs no restart.
 providers:
   file:
-    filename: /etc/traefik/dynamic.yml
-    watch: false
+    directory: /etc/traefik/dynamic
+    watch: true
 
+{% if traefik_acme_enabled | bool %}
 certificatesResolvers:
   le:
     acme:
@@ -44,5 +70,16 @@ certificatesResolvers:
 {% if traefik_acme_staging | bool %}
       caServer: https://acme-staging-v02.api.letsencrypt.org/directory
 {% endif %}
+{% if acme_challenge == 'dns' %}
+      # Proves control of the domain with a TXT record, through the DNS
+      # provider's API (credentials: acme-dns.env, from the vault).
+      dnsChallenge:
+        provider: {{ acme_dns_provider }}
+        resolvers:
+          - "1.1.1.1:53"
+          - "9.9.9.9:53"
+{% else %}
       httpChallenge:
         entryPoint: web
+{% endif %}
+{% endif %}

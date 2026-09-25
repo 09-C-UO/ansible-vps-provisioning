@@ -1,0 +1,7 @@
+{
+  "auths": {
+{% for auth in registry_auths %}
+    "{{ auth.registry }}": { "auth": "{{ (auth.username ~ ':' ~ auth.password) | b64encode }}" }{{ ',' if not loop.last else '' }}
+{% endfor %}
+  }
+}

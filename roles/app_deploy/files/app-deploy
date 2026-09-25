@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Root side of the deploy mechanism: app-deploy <app>
+
+Started by app-deploy@<app>.path when deploy drops a request in the inbox.
+deploy only chooses WHICH image of an allowed repository runs; the compose
+files (mounts, networks, privileges) stay root-owned in /opt/apps/<app>.
+
+Request file (written by deploy-request): two lines, "id=<16 hex>" and
+"image=<repository>[:tag]@sha256:<64 hex>". Everything in it is untrusted.
+"""
+import datetime
+import fcntl
+import json
+import os
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import time
+
+INBOX = "/var/lib/app-deploy/inbox"
+STATUS_DIR = "/var/lib/app-deploy/status"
+CONFIG_DIR = "/etc/app-deploy"
+LOCK_DIR = "/run/lock"
+MAX_REQUEST_BYTES = 1024
+
+APP_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+IMAGE_RE = re.compile(
+    r"^(?P<repo>[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?"
+    r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?"
+    r"@sha256:[a-f0-9]{64}$")
+
+
+class Refused(Exception):
+    """The request is invalid; nothing was changed."""
+
+    def __init__(self, message, request_id=None):
+        super().__init__(message)
+        self.request_id = request_id
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def write_status(app, **fields):
+    fields.update(app=app, updated_at=now())
+    tmp = os.path.join(STATUS_DIR, f".{app}.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(fields, handle, indent=2)
+        handle.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, os.path.join(STATUS_DIR, f"{app}.json"))
+
+
+def notify(title, body=""):
+    subprocess.run(["/usr/local/sbin/notify-discord", "infra", title, body], check=False)
+
+
+def read_request(app, deploy_uid):
+    """Read and remove the request without ever following a link planted by deploy."""
+    path = os.path.join(INBOX, f"{app}.request")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        os.unlink(path)
+        raise Refused(f"request is not a regular file ({error.strerror})") from None
+    try:
+        os.unlink(path)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise Refused("request is not a regular file")
+        if info.st_uid != deploy_uid:
+            raise Refused("request is not owned by the deploy account")
+        data = os.read(fd, MAX_REQUEST_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(data) > MAX_REQUEST_BYTES:
+        raise Refused("request is too large")
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        raise Refused("request is not ASCII") from None
+    # The id is extracted first so that deploy-request can recognise its refusal.
+    found = re.search(r"^id=([a-f0-9]{16})$", text, re.MULTILINE)
+    request_id = found.group(1) if found else None
+    fields = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep or key not in ("id", "image") or key in fields:
+            raise Refused("request must contain exactly one id= and one image= line", request_id)
+        fields[key] = value
+    if set(fields) != {"id", "image"} or not request_id:
+        raise Refused("request must contain exactly one id= and one image= line", request_id)
+    return fields
+
+
+def validate_image(request, config):
+    match = IMAGE_RE.match(request["image"])
+    if not match:
+        raise Refused("image must be <repository>[:tag]@sha256:<digest>", request["id"])
+    if match.group("repo") not in config["image_repos"]:
+        raise Refused(f"repository {match.group('repo')} is not allowed for {config['app']}",
+                      request["id"])
+
+
+class Deployment:
+    def __init__(self, config):
+        self.config = config
+        self.dir = config["compose_dir"]
+        self.release = os.path.join(self.dir, "release.env")
+        self.log = []
+
+    def run(self, *args, timeout=600):
+        self.log.append("$ " + " ".join(args))
+        result = subprocess.run(args, cwd=self.dir, capture_output=True, text=True,
+                                timeout=timeout, check=False)
+        output = (result.stdout + result.stderr).strip()
+        if output:
+            self.log.extend(output.splitlines()[-15:])
+        print("\n".join(self.log[-16:]), flush=True)
+        return result.returncode == 0
+
+    def compose(self, *args, timeout=600):
+        base = ["docker", "compose", "--project-name", self.config["app"],
+                "--project-directory", self.dir]
+        for name in self.config["compose_files"]:
+            base += ["-f", name]
+        for name in (".env", "release.env"):
+            base += ["--env-file", name]
+        return self.run(*base, *args, timeout=timeout)
+
+    def current_image(self):
+        try:
+            with open(self.release, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("APP_IMAGE="):
+                        return line.strip().split("=", 1)[1]
+        except FileNotFoundError:
+            pass
+        return ""
+
+    def set_image(self, image):
+        tmp = self.release + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(f"# Managed by app-deploy.\nAPP_IMAGE={image}\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, self.release)
+
+    def healthy(self):
+        host, path = self.config["health_host"], self.config["health_path"]
+        expected = str(self.config["health_status"])
+        for _ in range(10):
+            # Through Traefik on this host: checks the whole path a visitor takes.
+            result = subprocess.run(
+                ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10",
+                 "--resolve", f"{host}:443:127.0.0.1", f"https://{host}{path}"],
+                capture_output=True, text=True, check=False)
+            if result.stdout == expected:
+                self.log.append(f"health check https://{host}{path}: {expected}")
+                return True
+            time.sleep(3)
+        self.log.append(f"health check https://{host}{path}: got {result.stdout or 'no answer'}, "
+                        f"expected {expected}")
+        return False
+
+    def start(self):
+        return (self.compose("up", "-d", "--wait", "--wait-timeout", "180", "--remove-orphans")
+                and self.healthy())
+
+
+def deploy(app, config, request):
+    image = request["image"]
+    job = Deployment(config)
+    previous = job.current_image()
+    write_status(app, id=request["id"], state="running", image=image, previous=previous)
+
+    if not job.run("docker", "pull", image):
+        return "failed", previous, "pull failed", job.log
+    job.set_image(image)
+    if config["migrate_command"] and not job.compose(
+            "run", "--rm", config["migrate_service"], *config["migrate_command"]):
+        job.set_image(previous)
+        return "failed", previous, "migration failed; previous image kept", job.log
+    if job.start():
+        return "success", image, "deployed", job.log
+    if not previous:
+        return "failed", "", "new image unhealthy and no previous image to restore", job.log
+    job.set_image(previous)
+    if job.start():
+        return "rolled_back", previous, "new image unhealthy; previous image restored", job.log
+    return "rollback_failed", previous, "new image unhealthy and rollback failed", job.log
+
+
+def main():
+    if len(sys.argv) != 2 or not APP_RE.match(sys.argv[1]):
+        sys.exit("usage: app-deploy <app>")
+    app = sys.argv[1]
+    with open(os.path.join(CONFIG_DIR, f"{app}.json"), encoding="utf-8") as handle:
+        config = json.load(handle)
+    deploy_uid = pwd.getpwnam(config["deploy_user"]).pw_uid
+
+    with open(os.path.join(LOCK_DIR, f"app-deploy-{app}.lock"), "w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            request = read_request(app, deploy_uid)
+            if request is None:
+                return
+            validate_image(request, config)
+        except Refused as error:
+            write_status(app, id=error.request_id, state="refused", message=str(error))
+            notify(f"Déploiement de {app} refusé", str(error))
+            print(f"refused: {error}", file=sys.stderr)
+            return
+
+        try:
+            state, running, message, log = deploy(app, config, request)
+        except Exception as error:  # noqa: BLE001 - reported, then re-raised
+            write_status(app, id=request["id"], state="error", image=request["image"],
+                         message=f"unexpected error: {error}")
+            notify(f"Déploiement de {app} : erreur interne", repr(error))
+            raise
+        write_status(app, id=request["id"], state=state, image=request["image"],
+                     running=running, message=message, log=log[-40:])
+        title = f"Déploiement de {app} : {state}"
+        notify(title, f"{message}\nimage: {request['image']}\nen service: {running}")
+        print(f"{state}: {message}")
+
+
+if __name__ == "__main__":
+    main()

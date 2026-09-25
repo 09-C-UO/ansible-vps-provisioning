@@ -1,0 +1,12 @@
+---
+# Production VPS. Secrets: secrets.vault.yml in this directory
+#   ansible-vault create inventories/prod/group_vars/vps/secrets.vault.yml
+ssh_key_dir: "{{ lookup('env', 'HOME') }}/.ssh/ansible/app-prod"
+ssh_alias_prefix: app-prod
+
+# OVH images provide the ubuntu account (provision.sh -u ubuntu).
+bootstrap_user: ubuntu
+
+# A record of this name must point to the server before the first run.
+traefik_domain: ""
+traefik_acme_email: ""

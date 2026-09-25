@@ -1,0 +1,10 @@
+# Managed by Ansible.
+[Unit]
+Description=Check the server metrics every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

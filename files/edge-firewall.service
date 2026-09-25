@@ -1,0 +1,15 @@
+# Managed by Ansible. See /usr/local/sbin/edge-firewall.
+[Unit]
+Description=Accept published web ports from the edge proxy only
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/edge-firewall start
+ExecStop=/usr/local/sbin/edge-firewall stop
+
+[Install]
+# Started again whenever Docker (re)starts and rebuilds its chains.
+WantedBy=docker.service

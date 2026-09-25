@@ -1,0 +1,4 @@
+---
+# Test VPS (Linode). Secrets: secrets.vault.yml in this directory.
+ssh_key_dir: "{{ lookup('env', 'HOME') }}/.ssh/ansible-linode/traeffik-forward-proxy"
+ssh_alias_prefix: traefik-test

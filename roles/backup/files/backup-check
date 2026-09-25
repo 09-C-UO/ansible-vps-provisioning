@@ -1,0 +1,4 @@
+#!/bin/bash
+# Weekly: verify the repository structure and read back 5% of the data.
+. /usr/local/lib/backup-lib.sh
+restic check --read-data-subset=5%

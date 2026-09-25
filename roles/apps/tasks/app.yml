@@ -1,0 +1,159 @@
+---
+# One application: checks, files, containers, Traefik route, deploy trigger.
+# `app` is the entry of `apps` merged over app_defaults.
+
+- name: "Validate the definition of {{ app.name }}"
+  ansible.builtin.assert:
+    that:
+      - app.name is match('^[a-z][a-z0-9-]{1,30}$')
+      - app.domains | length > 0
+      - app.auth in ['none', 'basic']
+      - app.compose_template is defined
+      - app.image_repos | length == 0 or app.initial_image | length > 0
+    fail_msg: >-
+      {{ app.name }}: needs a lowercase name, at least one domain, auth none|basic,
+      a compose_template, and an initial_image when image_repos is set.
+    quiet: true
+
+- name: "Render the compose file of {{ app.name }}"
+  ansible.builtin.set_fact:
+    app_compose_text: "{{ lookup('ansible.builtin.template', app.compose_template) }}"
+
+# The compose file runs as root: refuse anything that would give the
+# application a way out of its containers (see filter_plugins/app_compose.py).
+- name: "Check that {{ app.name }} respects the hosting model"
+  vars:
+    app_lint: >-
+      {{ app | combine({'compose_dir': apps_root ~ '/' ~ app.name,
+                        'allowed_bind_roots': [apps_root ~ '/' ~ app.name,
+                                               application_root ~ '/' ~ app.name]}) }}
+    violations: "{{ app_compose_text | from_yaml | compose_violations(app_lint) }}"
+  ansible.builtin.assert:
+    that:
+      - violations | length == 0
+    fail_msg: "{{ violations }}"
+    quiet: true
+
+- name: "Create the directories of {{ app.name }}"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: '0750'
+  loop:
+    - { path: "{{ apps_root }}/{{ app.name }}", owner: root }
+    - { path: "{{ application_root }}/{{ app.name }}", owner: "{{ deploy_user }}" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: "Create the deploy-owned content directories of {{ app.name }}"
+  ansible.builtin.file:
+    path: "{{ application_root }}/{{ app.name }}/{{ item.dest | dirname }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: '0750'
+  loop: "{{ app.seed_files }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  when: item.dest | dirname | length > 0
+
+# force: false keeps whatever deploy has published since the first run.
+- name: "Publish the initial content of {{ app.name }}"
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ application_root }}/{{ app.name }}/{{ item.dest }}"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: '0644'
+    force: false
+  loop: "{{ app.seed_files }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: "Write the compose files of {{ app.name }}"
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "{{ apps_root }}/{{ app.name }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0640'
+  loop:
+    - { dest: compose.yml, content: "# Managed by Ansible ({{ app.compose_template }}).\n{{ app_compose_text }}" }
+    - dest: compose.edge.yml
+      content: "{{ lookup('ansible.builtin.template', 'compose.edge.yml.j2',
+                   template_vars={'web_has_networks': (app_compose_text | from_yaml).services[app.web.service].networks is defined}) }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: "Write the environment of {{ app.name }} (root only)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ apps_root }}/{{ app.name }}/.env"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+# Owned by app-deploy after the first run: Ansible only creates it.
+- name: "Record the initial image of {{ app.name }}"
+  ansible.builtin.copy:
+    content: "# Managed by app-deploy.\nAPP_IMAGE={{ app.initial_image }}\n"
+    dest: "{{ apps_root }}/{{ app.name }}/release.env"
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+
+- name: "Start the containers of {{ app.name }}"
+  community.docker.docker_compose_v2:
+    project_src: "{{ apps_root }}/{{ app.name }}"
+    project_name: "{{ app.name }}"
+    files:
+      - compose.yml
+      - compose.edge.yml
+    env_files:
+      - .env
+      - release.env
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 180
+
+- name: "Route {{ app.name }} through Traefik"
+  ansible.builtin.template:
+    src: traefik-app.yml.j2
+    dest: "{{ traefik_root }}/dynamic/app-{{ app.name }}.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "Describe {{ app.name }} to the deploy worker"
+  ansible.builtin.copy:
+    content: "{{ app_deploy_config | to_nice_json }}\n"
+    dest: "/etc/app-deploy/{{ app.name }}.json"
+    owner: root
+    group: root
+    mode: '0640'
+  vars:
+    app_deploy_config:
+      app: "{{ app.name }}"
+      deploy_user: "{{ deploy_user }}"
+      compose_dir: "{{ apps_root }}/{{ app.name }}"
+      compose_files: [compose.yml, compose.edge.yml]
+      image_repos: "{{ app.image_repos }}"
+      migrate_service: "{{ app.web.service }}"
+      migrate_command: "{{ app.migrate_command }}"
+      health_host: "{{ app.domains[0] }}"
+      health_path: "{{ app.web.healthcheck_path }}"
+      health_status: "{{ 401 if app.auth == 'basic' else app.web.healthcheck_status }}"
+  when: app.image_repos | length > 0
+
+- name: "Watch the deploy requests of {{ app.name }}"
+  ansible.builtin.systemd_service:
+    name: "app-deploy@{{ app.name }}.path"
+    state: started
+    enabled: true
+  when: app.image_repos | length > 0

@@ -1,0 +1,7 @@
+# Managed by Ansible. Attach with: OnFailure=notify-failure@%n.service
+[Unit]
+Description=Alert on failure of %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/notify-unit-failure %i

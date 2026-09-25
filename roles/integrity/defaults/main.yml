@@ -1,0 +1,34 @@
+---
+integrity_enabled: true
+
+# Paths whose content changes by design: watching them would only produce noise.
+aide_excluded_paths:
+  - /var/lib/docker
+  - /var/lib/containerd
+  - /var/log
+  - /var/cache
+  - /var/tmp
+  - /var/backups
+  - /var/lib/app-deploy
+  - /var/lib/apt
+  - /var/lib/dpkg
+  - /var/lib/systemd
+  - /var/lib/fail2ban
+  - /var/lib/restic
+  - /var/lib/server-health
+  - /run
+  - /tmp
+  - /home
+  # docker build cache; /root/.docker/config.json (registry credentials) stays watched.
+  - /root/.docker/buildx
+  - "{{ application_root }}"
+  - "{{ apps_root }}/[^/]+/release.env"
+  - "{{ traefik_root }}/acme"
+  - "{{ traefik_root }}/logs"
+
+aide_check_schedule: "*-*-* 04:40:00"
+rkhunter_check_schedule: "Sat *-*-* 04:50:00"
+
+# -e aide_accept=true: take the current state as the new baseline, after the
+# last report has been read and every change is explained.
+aide_accept: false

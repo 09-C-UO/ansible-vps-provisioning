@@ -1,0 +1,66 @@
+---
+- name: Read the deploy account identifiers
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ deploy_user }}"
+
+- name: Record the deploy uid and gid for the compose templates
+  ansible.builtin.set_fact:
+    deploy_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
+    deploy_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
+
+- name: Create the root-owned applications directory
+  ansible.builtin.file:
+    path: "{{ apps_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Deploy every application
+  ansible.builtin.include_tasks: app.yml
+  loop: "{{ apps }}"
+  loop_control:
+    loop_var: app_spec
+    label: "{{ app_spec.name }}"
+  vars:
+    app: "{{ app_defaults | combine(app_spec, recursive=True) }}"
+
+# From this machine, through DNS and Traefik: the path a visitor takes.
+- name: Check that every application answers
+  ansible.builtin.uri:
+    url: "https://{{ app.domains[0] }}{{ app.web.healthcheck_path }}"
+    status_code: "{{ 401 if app.auth == 'basic' else app.web.healthcheck_status }}"
+    validate_certs: "{{ traefik_validate_certs }}"
+  register: anonymous_check
+  # The first certificate can take a minute to be issued.
+  retries: 18
+  delay: 10
+  until: anonymous_check is succeeded
+  loop: "{{ apps }}"
+  loop_control:
+    loop_var: app_spec
+    label: "{{ app_spec.name }}"
+  vars:
+    app: "{{ app_defaults | combine(app_spec, recursive=True) }}"
+  delegate_to: localhost
+  become: false
+
+- name: Check that BasicAuth applications answer with credentials
+  ansible.builtin.uri:
+    url: "https://{{ app.domains[0] }}{{ app.web.healthcheck_path }}"
+    url_username: "{{ traefik_basic_auth_user }}"
+    url_password: "{{ traefik_basic_auth_password }}"
+    force_basic_auth: true
+    status_code: "{{ app.web.healthcheck_status }}"
+    validate_certs: "{{ traefik_validate_certs }}"
+  loop: "{{ apps }}"
+  loop_control:
+    loop_var: app_spec
+    label: "{{ app_spec.name }}"
+  vars:
+    app: "{{ app_defaults | combine(app_spec, recursive=True) }}"
+  when: app.auth == 'basic'
+  delegate_to: localhost
+  become: false
+  no_log: true

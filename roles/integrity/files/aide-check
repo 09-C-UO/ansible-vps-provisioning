@@ -1,0 +1,20 @@
+#!/bin/bash
+# Daily AIDE comparison against the accepted baseline. Changes are sent to the
+# security channel; the baseline is never updated automatically (that would
+# silently accept whatever an intruder changed).
+set -uo pipefail
+report="$(aide --config /etc/aide/aide.conf --check 2>&1)"
+status=$?
+# AIDE exit codes: 0 = no change, 1-7 = added/removed/changed bits, 14+ = error.
+if [ "$status" -eq 0 ]; then
+    echo "AIDE: no change"
+elif [ "$status" -le 7 ]; then
+    # Counts first, then the changed files (not directories): what to look at.
+    summary="$(printf '%s\n' "$report" | grep -E '^(  Added|  Removed|  Changed)'
+               printf '%s\n' "$report" | grep -E '^[fl][ +=.:!-]' | head -n 40)"
+    printf '%s\n' "$summary" | /usr/local/sbin/notify-discord security "AIDE : fichiers modifiés depuis la base acceptée"
+    printf '%s\n' "$report"
+else
+    printf '%s\n' "$report" >&2
+    exit "$status"
+fi

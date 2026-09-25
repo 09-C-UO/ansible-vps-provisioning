@@ -1,0 +1,12 @@
+# Managed by Ansible.
+[Unit]
+Description=restic backup-run
+Wants=network-online.target
+After=network-online.target docker.service
+OnFailure=notify-failure@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/backup-run
+Nice=10
+IOSchedulingClass=idle

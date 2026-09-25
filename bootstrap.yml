@@ -8,13 +8,15 @@
 #   2. admin (port 22)             -> sshd listens on 22 AND ssh_port
 #   3. admin (ssh_port)            -> close 22, lock root, remove the bootstrap key
 
+# Runs on this machine (connection: local) but with the server's variables,
+# which only exist for the vps group of the chosen inventory.
 - name: Prepare the control machine
-  hosts: localhost
+  hosts: vps
   connection: local
   gather_facts: false
   become: false
   vars:
-    target_host: "{{ hostvars[groups['vps'][0]].ansible_host }}"
+    target_host: "{{ ansible_host }}"
 
   tasks:
     - name: Verify both SSH key pairs exist
@@ -30,7 +32,7 @@
 
     - name: Ensure the local SSH config exists
       ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.ssh/config"
+        path: "{{ ssh_client_config }}"
         state: touch
         mode: '0600'
         modification_time: preserve
@@ -38,7 +40,7 @@
 
     - name: Configure the admin and deploy SSH aliases
       ansible.builtin.blockinfile:
-        path: "{{ lookup('env', 'HOME') }}/.ssh/config"
+        path: "{{ ssh_client_config }}"
         marker: "# {mark} ANSIBLE MANAGED BLOCK: {{ ssh_alias_prefix }}"
         block: |
           Host {{ ssh_alias_prefix }}-admin
@@ -47,6 +49,7 @@
               User {{ admin_user }}
               IdentityFile {{ admin_ssh_key }}
               IdentitiesOnly yes
+              UserKnownHostsFile {{ ssh_known_hosts_file }}
 
           Host {{ ssh_alias_prefix }}-deploy
               HostName {{ target_host }}
@@ -54,6 +57,7 @@
               User {{ deploy_user }}
               IdentityFile {{ deploy_ssh_key }}
               IdentitiesOnly yes
+              UserKnownHostsFile {{ ssh_known_hosts_file }}
         mode: '0600'
 
 - name: Create the accounts through the provider's initial access
@@ -202,6 +206,7 @@
 
     - name: Trust the same host key on the new port
       ansible.builtin.known_hosts:
+        path: "{{ ssh_known_hosts_file }}"
         name: "{{ known_host_name }}"
         key: "{{ known_host_name }} {{ (server_host_key.content | b64decode).split()[:2] | join(' ') }}"
         state: present

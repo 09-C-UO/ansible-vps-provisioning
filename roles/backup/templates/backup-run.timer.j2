@@ -1,0 +1,11 @@
+# Managed by Ansible.
+[Unit]
+Description=Schedule backup-run
+
+[Timer]
+OnCalendar={{ backup_schedule }}
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

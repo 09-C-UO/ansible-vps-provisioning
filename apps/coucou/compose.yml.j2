@@ -1,0 +1,17 @@
+# Static page served from {{ application_root }}/coucou/public, which deploy
+# owns and fills (scp/rsync). nginx runs as deploy's uid, read-only.
+services:
+  web:
+    image: {{ coucou_image }}
+    restart: unless-stopped
+    user: "{{ deploy_uid }}:{{ deploy_gid }}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp
+    volumes:
+      - {{ application_root }}/coucou/public:/usr/share/nginx/html:ro

@@ -1,0 +1,34 @@
+---
+- name: Install the Discord alert scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/sbin/{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - notify-discord
+    - notify-unit-failure
+
+- name: Store the webhook URLs for root only
+  ansible.builtin.template:
+    src: notify-discord.env.j2
+    dest: /etc/notify-discord.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install the failure alert unit
+  ansible.builtin.copy:
+    src: notify-failure@.service
+    dest: /etc/systemd/system/notify-failure@.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: notify_unit
+
+- name: Reload systemd for the alert unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: notify_unit.changed

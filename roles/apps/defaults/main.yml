@@ -1,0 +1,30 @@
+---
+# Values every entry of `apps` starts from (merged recursively).
+app_defaults:
+  domains: []
+  auth: none                 # none | basic (shared BasicAuth user, see traefik.yml)
+  web:
+    service: web
+    port: 8080
+    healthcheck_path: /
+    healthcheck_status: 200
+  # Deploys through deploy-request: allowed repositories, and the image used
+  # until the first deploy. Empty image_repos = no image deploys (static app).
+  image_repos: []
+  initial_image: ""
+  # Commands run with the new image before it replaces the old one.
+  migrate_command: []
+  # Database dumped by the backup role; service = compose service name.
+  postgres:
+    enabled: false
+    service: db
+    image: postgres:17-alpine
+  # Extra capabilities allowed per service (everything else is dropped).
+  allowed_cap_add: {}
+  # Files copied once into the deploy-owned directory, never overwritten.
+  seed_files: []
+
+# Per-application environment, from the vault, written to /opt/apps/<app>/.env:
+#   app_secrets:
+#     demo: { POSTGRES_PASSWORD: "...", DATABASE_URL: "..." }
+app_secrets: {}

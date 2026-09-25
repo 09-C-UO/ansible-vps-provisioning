@@ -1,0 +1,5 @@
+---
+# Discord webhook URLs, from the vault. Empty = alerts only go to the journal
+# (journalctl -t notify-discord).
+discord_webhook_infra: ""
+discord_webhook_security: ""

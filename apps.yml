@@ -1,0 +1,21 @@
+---
+- name: Monitor the server and host the applications behind Traefik
+  hosts: vps
+  become: true
+  gather_facts: false
+  roles:
+    - role: notify
+      tags: [notify]
+    - role: monitoring
+      tags: [monitoring]
+    - role: app_deploy
+      tags: [apps, deploy]
+    - role: apps
+      tags: [apps]
+    - role: backup
+      tags: [backup]
+      when: backup_enabled | bool
+    # Last: the AIDE baseline must include everything configured above.
+    - role: integrity
+      tags: [integrity]
+      when: integrity_enabled | bool

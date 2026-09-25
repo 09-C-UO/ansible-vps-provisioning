@@ -13,35 +13,25 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
+{% if acme_challenge == 'dns' %}
+    env_file:
+      - ./acme-dns.env
+{% endif %}
     ports:
       - "80:8080"
       - "443:8443"
     volumes:
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
+      # A directory, not files: a file mount would keep pointing at the old
+      # inode after Ansible replaces the file, and watch would see nothing.
+      - ./dynamic:/etc/traefik/dynamic:ro
       - ./users.htpasswd:/etc/traefik/users.htpasswd:ro
       - ./acme:/acme
       - ./logs:/logs
     networks:
       - edge
 
-  # Serves the files deploy puts in {{ application_root }}/coucou, as deploy's
-  # uid, read-only, and without any published port.
-  coucou:
-    image: {{ coucou_image }}
-    restart: unless-stopped
-    user: "{{ deploy_uid }}:{{ deploy_gid }}"
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp
-    volumes:
-      - {{ application_root }}/coucou:/usr/share/nginx/html:ro
-    networks:
-      - edge
-
+# Applications attach their web service to this network (compose.edge.yml).
 networks:
-  edge: {}
+  edge:
+    name: edge

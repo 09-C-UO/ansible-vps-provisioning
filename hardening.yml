@@ -20,6 +20,16 @@
           - ansible_facts['distribution_version'] is version('22.04', '>=')
         fail_msg: This baseline supports Ubuntu 22.04 LTS or newer.
 
+    - name: Refuse to run the lab against anything but a container
+      ansible.builtin.assert:
+        that:
+          - host_is_container | bool
+        fail_msg: >-
+          lab_host is set but the target is not detected as a container
+          ({{ ansible_facts['virtualization_type'] | default('unknown') }}).
+          Stopping before kernel-wide settings reach the lab's host.
+      when: lab_host | default(false) | bool
+
     - name: Verify the controller connected through the admin account
       ansible.builtin.assert:
         that:
@@ -145,6 +155,11 @@
         state: present
         sysctl_file: /etc/sysctl.d/99-ansible-hardening.conf
         reload: true
+      # net.ipv4/net.ipv6 keys are per network namespace; every other key is
+      # kernel-wide and would change the lab's host through a container.
+      when: not host_is_container or item.key is match('net\.ipv[46]\.')
+      loop_control:
+        label: "{{ item.key }}"
       loop:
         - { key: fs.protected_hardlinks, value: '1' }
         - { key: fs.protected_symlinks, value: '1' }
@@ -311,6 +326,18 @@
         comment: Managed public service
       loop: "{{ public_tcp_ports }}"
 
+    # UFW applies its own sysctl file whenever it starts or reloads, after the
+    # system's: its log_martians=0 would silently undo the setting above.
+    - name: Keep UFW from turning martian logging back off
+      ansible.builtin.lineinfile:
+        path: /etc/ufw/sysctl.conf
+        regexp: '^net/ipv4/conf/{{ item }}/log_martians='
+        line: "net/ipv4/conf/{{ item }}/log_martians=1"
+      loop:
+        - all
+        - default
+      notify: Reload UFW
+
     - name: Enable UFW logging
       community.general.ufw:
         logging: low
@@ -376,6 +403,8 @@
         name: "{{ item }}"
         state: started
         enabled: true
+      # auditd, AppArmor and the clock are kernel-wide: not managed from a container.
+      when: not host_is_container or item in ['fail2ban', 'unattended-upgrades']
       loop:
         - apparmor
         - auditd
@@ -494,6 +523,7 @@
     - name: Load audit rules
       ansible.builtin.command: /usr/sbin/augenrules --load
       changed_when: true
+      when: not host_is_container
 
     - name: Reload UFW
       community.general.ufw:

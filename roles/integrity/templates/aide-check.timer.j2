@@ -1,0 +1,11 @@
+# Managed by Ansible.
+[Unit]
+Description=Schedule the aide integrity check
+
+[Timer]
+OnCalendar={{ aide_check_schedule }}
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

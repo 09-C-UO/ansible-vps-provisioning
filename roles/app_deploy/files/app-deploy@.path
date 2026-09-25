@@ -1,0 +1,10 @@
+# Managed by Ansible. Starts app-deploy@<app>.service when deploy drops a request.
+[Unit]
+Description=Deploy requests for %i
+
+[Path]
+PathExists=/var/lib/app-deploy/inbox/%i.request
+Unit=app-deploy@%i.service
+
+[Install]
+WantedBy=paths.target

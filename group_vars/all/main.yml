@@ -1,4 +1,9 @@
 ---
+# Defaults shared by every environment. Per-environment values (host, key
+# directory, domains, apps) live in inventories/<env>/group_vars/vps/, which
+# take precedence over this file. Secrets live next to them in
+# inventories/<env>/group_vars/vps/secrets.vault.yml.
+
 # --- Accounts -----------------------------------------------------------------
 admin_user: admin
 deploy_user: deploy
@@ -8,12 +13,14 @@ deploy_user: deploy
 bootstrap_user: root
 
 # Two distinct keys: one per account. Private keys stay on this machine.
-ssh_key_dir: "{{ lookup('env', 'HOME') }}/.ssh/ansible-linode/traeffik-forward-proxy"
+ssh_key_dir: "{{ lookup('env', 'HOME') }}/.ssh/ansible/{{ inventory_hostname }}"
 admin_ssh_key: "{{ ssh_key_dir }}/admin"
 deploy_ssh_key: "{{ ssh_key_dir }}/deploy"
 
-# Aliases written to ~/.ssh/config: `ssh traefik-test-admin`, `ssh traefik-test-deploy`.
-ssh_alias_prefix: traefik-test
+# Aliases written to ssh_client_config: `ssh <prefix>-admin`, `ssh <prefix>-deploy`.
+ssh_alias_prefix: "{{ inventory_hostname }}"
+ssh_client_config: "{{ lookup('env', 'HOME') }}/.ssh/config"
+ssh_known_hosts_file: "{{ lookup('env', 'HOME') }}/.ssh/known_hosts"
 
 # --- Connection (every run after bootstrap) --------------------------------------
 ansible_user: "{{ admin_user }}"
@@ -46,21 +53,65 @@ automatic_reboot_time: "04:30"
 # added to the docker group. Admin must use sudo; deploy cannot control Docker.
 install_docker: true
 
+# True inside a container (the local lab). Kernel-wide settings (audit rules,
+# non-network sysctls, AppArmor, clock) are skipped there: a privileged
+# container shares the host kernel, so applying them would change the host.
+host_is_container: >-
+  {{ ansible_facts['virtualization_role'] | default('') == 'guest'
+     and ansible_facts['virtualization_type'] | default('')
+     in ['docker', 'container', 'containerd', 'podman', 'lxc'] }}
+
 # --- Traefik -------------------------------------------------------------------
 traefik_root: /opt/traefik
 traefik_image: traefik:v3.5
 coucou_image: nginxinc/nginx-unprivileged:1.28-alpine
 
+# Base domain available to app definitions as traefik_effective_domain.
 # Empty = <ip-with-dashes>.sslip.io (public DNS that resolves to the IP itself).
-# Own domain: set e.g. coucou.example.com with an A record in "DNS only" mode.
 traefik_domain: ""
 traefik_acme_email: ""
+# false = no Let's Encrypt at all: Traefik serves its self-signed default
+# certificate (local lab, where the server cannot be reached from the internet).
+traefik_acme_enabled: true
 # true = Let's Encrypt staging (untrusted certs, no rate limits) for repeated tests.
 traefik_acme_staging: false
 
 traefik_basic_auth_user: admin
-# traefik_basic_auth_password comes from group_vars/all/secrets.vault.yml.
+# traefik_basic_auth_password comes from the vault.
 
 traefik_effective_domain: >-
   {{ traefik_domain if traefik_domain | length > 0
      else (ansible_host | replace('.', '-')) ~ '.sslip.io' }}
+
+# --- Edge: what sits in front of Traefik (docs/HARDENING.md, "Bordure") ------
+# none: visitors reach Traefik directly (A record in "DNS only" mode).
+# cloudflare: Cloudflare proxy ("orange cloud"). Ports 80/443 then accept
+# Cloudflare only, the client IP comes from CF-Connecting-IP, and BasicAuth
+# brute force is banned through the Cloudflare API instead of DOCKER-USER.
+edge_proxy: none
+# From the vault when edge_proxy is cloudflare: a token limited to the zone
+# with "Zone > Firewall Services > Edit", and the zone id.
+cloudflare_firewall_token: ""
+cloudflare_zone_id: ""
+
+# http: HTTP-01 on port 80 (default). dns: DNS-01 through the DNS provider's
+# API; needed when port 80 is not reachable, works behind Cloudflare too.
+acme_challenge: http
+# lego provider name (https://go-acme.github.io/lego/dns/): ovh, cloudflare...
+acme_dns_provider: ""
+# From the vault, the variables that provider expects, e.g.
+#   OVH:        { OVH_ENDPOINT: ovh-eu, OVH_APPLICATION_KEY: ..., OVH_APPLICATION_SECRET: ..., OVH_CONSUMER_KEY: ... }
+#   Cloudflare: { CF_DNS_API_TOKEN: ... }   (token with Zone > DNS > Edit on this zone only)
+acme_dns_env: {}
+
+# Certificates can only be checked when a trusted CA issued them.
+traefik_validate_certs: "{{ traefik_acme_enabled | bool and not (traefik_acme_staging | bool) }}"
+
+# --- Applications --------------------------------------------------------------
+# Root-owned compose files and secrets; deploy's content lives in application_root.
+apps_root: /opt/apps
+
+# Applications served by Traefik (defaults: roles/apps/defaults/main.yml;
+# guide: docs/DEPLOYMENT.md). Empty: a hardened server ready for its first
+# application; Traefik answers 404 until a route exists. Examples: apps/.
+apps: []

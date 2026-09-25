@@ -1,0 +1,13 @@
+# Managed by Ansible. Sourced by the backup-* scripts.
+BACKUP_PATHS=({% for path in backup_paths %}"{{ path }}" {% endfor %})
+KEEP=(--keep-daily {{ backup_keep_daily }} --keep-weekly {{ backup_keep_weekly }} --keep-monthly {{ backup_keep_monthly }})
+PRUNE_ON_SERVER={{ backup_prune_on_server | bool | lower }}
+# app compose-service user database
+DATABASES=(
+{% for app_spec in apps %}
+{% set app = app_defaults | combine(app_spec, recursive=True) %}
+{% if app.postgres.enabled %}
+  "{{ app.name }} {{ app.postgres.service }} {{ app.postgres.user | default(app.name) }} {{ app.postgres.database | default(app.name) }}"
+{% endif %}
+{% endfor %}
+)

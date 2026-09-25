@@ -1,0 +1,11 @@
+#!/bin/sh
+# Called by notify-failure@<unit>.service (OnFailure=): sends the unit's last
+# log lines to Discord. Integrity checks go to the security channel.
+set -eu
+unit="$1"
+case "$unit" in
+    aide-check*|rkhunter-check*) channel=security ;;
+    *) channel=infra ;;
+esac
+journalctl -u "$unit" -n 15 --no-pager -o cat \
+    | /usr/local/sbin/notify-discord "$channel" "Échec de $unit"

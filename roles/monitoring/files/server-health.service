@@ -1,0 +1,8 @@
+# Managed by Ansible.
+[Unit]
+Description=Server metrics check (disk, memory, load)
+OnFailure=notify-failure@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/server-health

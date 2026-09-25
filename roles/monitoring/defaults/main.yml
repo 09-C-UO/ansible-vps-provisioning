@@ -1,0 +1,13 @@
+---
+# Server metrics, checked every 5 minutes; an alert when a threshold is crossed
+# and another when it is back to normal (never one per check).
+health_disk_max_percent: 85
+health_inode_max_percent: 85
+health_memory_min_available_percent: 10
+# 5-minute load average allowed per CPU.
+health_load_per_cpu: 2
+
+# Accounts whose SSH logins alert the security channel. deploy is left out:
+# CI logs in on every deploy.
+login_alert_users:
+  - "{{ admin_user }}"

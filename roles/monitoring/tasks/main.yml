@@ -1,0 +1,57 @@
+---
+- name: Install the monitoring scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/sbin/{{ item }}"
+    owner: root
+    group: root
+    mode: '0750'
+  loop:
+    - server-health
+    - notify-login
+
+- name: Write the metric thresholds
+  ansible.builtin.template:
+    src: server-health.conf.j2
+    dest: /etc/server-health.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the metrics check units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - server-health.service
+    - server-health.timer
+  register: health_units
+
+- name: Reload systemd for the metrics check
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: health_units.changed
+
+- name: Schedule the metrics check
+  ansible.builtin.systemd_service:
+    name: server-health.timer
+    state: started
+    enabled: true
+
+- name: List the accounts whose logins alert
+  ansible.builtin.copy:
+    content: "{{ login_alert_users | join('\n') }}\n"
+    dest: /etc/notify-login.users
+    owner: root
+    group: root
+    mode: '0644'
+
+# optional: if the script is missing or fails, the login still succeeds.
+- name: Alert on SSH logins of watched accounts
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/sshd
+    line: "session optional pam_exec.so quiet /usr/local/sbin/notify-login"
+    insertafter: EOF

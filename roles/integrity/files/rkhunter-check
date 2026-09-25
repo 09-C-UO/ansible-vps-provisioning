@@ -1,0 +1,14 @@
+#!/bin/bash
+# Weekly rkhunter scan; warnings go to the security channel.
+set -uo pipefail
+report="$(rkhunter --check --skip-keypress --nocolors --report-warnings-only 2>&1)"
+status=$?
+if [ "$status" -eq 0 ]; then
+    echo "rkhunter: no warning"
+elif [ "$status" -eq 1 ]; then
+    printf '%s\n' "$report" | /usr/local/sbin/notify-discord security "rkhunter : avertissements"
+    printf '%s\n' "$report"
+else
+    printf '%s\n' "$report" >&2
+    exit "$status"
+fi

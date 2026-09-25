@@ -1,0 +1,29 @@
+#!/bin/bash
+# Daily backup: consistent PostgreSQL dumps, then one restic snapshot of the
+# configured paths. Runs from backup-run.service; failures alert Discord.
+. /usr/local/lib/backup-lib.sh
+
+restic cat config >/dev/null 2>&1 || restic init
+
+install -d -m 0700 /var/backups/postgres
+for entry in "${DATABASES[@]}"; do
+    read -r app service user database <<<"$entry"
+    container="$(service_container "$app" "$service")"
+    [ -n "$container" ] || { echo "no running $service container for $app" >&2; exit 1; }
+    # pg_dump reads a consistent snapshot without stopping the application.
+    # Written to a file first: a failed dump must fail the backup, not be saved.
+    docker exec -u postgres "$container" pg_dump -Fc -U "$user" "$database" \
+        >"/var/backups/postgres/$app.dump.tmp"
+    mv "/var/backups/postgres/$app.dump.tmp" "/var/backups/postgres/$app.dump"
+    echo "dumped $app ($(stat -c %s "/var/backups/postgres/$app.dump") bytes)"
+done
+
+existing=()
+for path in "${BACKUP_PATHS[@]}"; do
+    [ -e "$path" ] && existing+=("$path")
+done
+restic backup --tag daily --exclude-caches "${existing[@]}"
+
+if [ "$PRUNE_ON_SERVER" = true ]; then
+    restic forget --prune "${KEEP[@]}"
+fi

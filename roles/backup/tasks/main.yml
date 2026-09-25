@@ -1,0 +1,84 @@
+---
+- name: Refuse to enable backups without a repository and credentials
+  ansible.builtin.assert:
+    that:
+      - restic_repository | length > 0
+      - restic_password is defined and restic_password | length >= 20
+    fail_msg: >-
+      backup_enabled needs restic_repository and a restic_password of 20+
+      characters in the vault (keep a copy of it outside the server).
+    quiet: true
+
+- name: Install restic
+  ansible.builtin.apt:
+    name: restic
+    state: present
+    cache_valid_time: 3600
+
+- name: Create the restic configuration directory
+  ansible.builtin.file:
+    path: /etc/restic
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Store the repository password and credentials (root only)
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "/etc/restic/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - { dest: password, content: "{{ restic_password }}\n" }
+    - { dest: env, content: "{{ lookup('ansible.builtin.template', 'restic.env.j2') }}" }
+    - { dest: backup.conf, content: "{{ lookup('ansible.builtin.template', 'backup.conf.j2') }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+
+- name: Install the backup library
+  ansible.builtin.copy:
+    src: backup-lib.sh
+    dest: /usr/local/lib/backup-lib.sh
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the backup scripts
+  ansible.builtin.copy:
+    src: "backup-{{ item }}"
+    dest: "/usr/local/sbin/backup-{{ item }}"
+    owner: root
+    group: root
+    mode: '0750'
+  loop: [run, check, restore-test, restic]
+
+- name: Install the backup units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - backup-run.service
+    - backup-run.timer
+    - backup-check.service
+    - backup-check.timer
+    - backup-restore-test.service
+    - backup-restore-test.timer
+  register: backup_units
+
+- name: Reload systemd for the backup units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: backup_units.changed
+
+- name: Schedule the backups
+  ansible.builtin.systemd_service:
+    name: "backup-{{ item }}.timer"
+    state: started
+    enabled: true
+  loop: [run, check, restore-test]

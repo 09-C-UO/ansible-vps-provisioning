@@ -1,0 +1,24 @@
+# Managed by Ansible. Middlewares and TLS options shared by every application;
+# each application's route is in its own file next to this one (app-<name>.yml).
+http:
+  middlewares:
+    basic-auth:
+      basicAuth:
+        usersFile: /etc/traefik/users.htpasswd
+        realm: restricted
+    # Per client IP. Slows bursts; fail2ban handles slow brute force.
+    rate-limit:
+      rateLimit:
+        average: 20
+        burst: 40
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: no-referrer
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12

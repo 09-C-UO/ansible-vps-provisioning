@@ -1,0 +1,76 @@
+---
+- name: Install the deploy request client (runs as deploy)
+  ansible.builtin.copy:
+    src: deploy-request
+    dest: /usr/local/bin/deploy-request
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the deploy worker (runs as root)
+  ansible.builtin.copy:
+    src: app-deploy
+    dest: /usr/local/sbin/app-deploy
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Create the deploy state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/lib/app-deploy, group: root, mode: '0755' }
+    # deploy can drop requests here but the directory itself is root's, so it
+    # cannot be swapped for a link to somewhere else.
+    - { path: /var/lib/app-deploy/inbox, group: "{{ deploy_user }}", mode: '0770' }
+    # Written by root only, readable by deploy.
+    - { path: /var/lib/app-deploy/status, group: root, mode: '0755' }
+    - { path: /etc/app-deploy, group: root, mode: '0750' }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install the deploy units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - app-deploy@.path
+    - app-deploy@.service
+  register: deploy_units
+
+- name: Reload systemd for the deploy units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: deploy_units.changed
+
+- name: Store the read-only registry credentials for root
+  ansible.builtin.template:
+    src: docker-config.json.j2
+    dest: /root/.docker/config.json
+    owner: root
+    group: root
+    mode: '0600'
+  when: registry_auths | length > 0
+  no_log: true
+
+# One task owns deploy's authorized_keys (exclusive): a CI key added anywhere
+# else would be erased by the next run, and deploy's own key must stay.
+- name: Install deploy's key and the deploy-only CI keys
+  ansible.posix.authorized_key:
+    user: "{{ deploy_user }}"
+    # Double quotes: YAML turns \n into a real newline (one key per line).
+    key: "{{ deploy_key_lines | join('\n') }}"
+    exclusive: true
+    manage_dir: true
+  vars:
+    deploy_ci_options: 'restrict,command="/usr/local/bin/deploy-request --ssh" '
+    deploy_key_lines: >-
+      {{ [lookup('ansible.builtin.file', deploy_ssh_key + '.pub')]
+         + (deploy_ci_public_keys | map('regex_replace', '^', deploy_ci_options) | list) }}

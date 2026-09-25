@@ -1,0 +1,9 @@
+---
+# Public keys allowed to request deploys only (CI). Each one gets a forced
+# command in deploy's authorized_keys: it cannot open a shell or a tunnel.
+deploy_ci_public_keys: []
+
+# Read-only registry credentials for private images, from the vault:
+#   registry_auths:
+#     - { registry: ghcr.io, username: me, password: "<read:packages token>" }
+registry_auths: []

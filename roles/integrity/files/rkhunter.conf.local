@@ -1,0 +1,19 @@
+# Managed by Ansible.
+# No downloads from rkhunter mirrors: signatures come with the Ubuntu package.
+UPDATE_MIRRORS=0
+MIRRORS_MODE=1
+WEB_CMD=""
+# File hashes are checked against dpkg's database: security updates do not
+# raise false alarms, a binary changed outside apt does.
+PKGMGR=DPKG
+# PermitRootLogin is set in /etc/ssh/sshd_config.d/, which rkhunter does not
+# read; the main file leaves it unset.
+ALLOW_SSH_ROOT_USER=unset
+# Ubuntu ships these as scripts, not binaries.
+SCRIPTWHITELIST=/usr/bin/egrep
+SCRIPTWHITELIST=/usr/bin/fgrep
+SCRIPTWHITELIST=/usr/bin/which.debianutils
+# Created by systemd to track /etc updates (ConditionNeedsUpdate).
+ALLOWHIDDENFILE=/etc/.updated
+# Container runtimes keep deleted files open and use hidden processes by design.
+DISABLE_TESTS=suspscan hidden_procs deleted_files packet_cap_apps apps

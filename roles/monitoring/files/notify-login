@@ -1,0 +1,19 @@
+#!/bin/sh
+# Called by pam_exec when an SSH session opens: alerts the security channel
+# when a watched account logs in. Never blocks nor fails a login: the alert is
+# sent in the background and the PAM line is "optional".
+[ "${PAM_TYPE:-}" = open_session ] || exit 0
+grep -qx "${PAM_USER:-}" /etc/notify-login.users 2>/dev/null || exit 0
+
+# One alert per account and address per 10 minutes: Ansible opens several sessions.
+address=$(printf '%s' "${PAM_RHOST:-unknown}" | tr -c 'a-zA-Z0-9.:' '_')
+stamp="/run/notify-login/$PAM_USER-$address"
+mkdir -p /run/notify-login
+[ -n "$(find "$stamp" -mmin -10 2>/dev/null)" ] && exit 0
+touch "$stamp"
+
+setsid /usr/local/sbin/notify-discord security \
+    "Connexion SSH : $PAM_USER depuis ${PAM_RHOST:-inconnu}" \
+    "Si cette connexion n'est pas la vôtre : intrusion probable." \
+    </dev/null >/dev/null 2>&1 &
+exit 0

@@ -1,0 +1,9 @@
+#!/bin/bash
+# restic with this server's repository and credentials, e.g.:
+#   sudo backup-restic snapshots
+#   sudo backup-restic dump latest /var/backups/postgres/<app>.dump > app.dump
+set -euo pipefail
+set -a
+. /etc/restic/env
+set +a
+exec restic "$@"

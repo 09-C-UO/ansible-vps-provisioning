@@ -1,0 +1,18 @@
+# Managed by Ansible. Root side of the deploy mechanism (see app-deploy).
+[Unit]
+Description=Deploy %i from its pending request
+Requires=docker.service
+After=docker.service
+# Only crashes land here: handled failures are reported by app-deploy itself.
+OnFailure=notify-failure@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/app-deploy %i
+TimeoutStartSec=20min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes

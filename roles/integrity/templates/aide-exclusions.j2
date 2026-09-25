@@ -1,0 +1,4 @@
+# Managed by Ansible. Paths that change by design (see roles/integrity).
+{% for path in aide_excluded_paths %}
+!{{ path }}
+{% endfor %}

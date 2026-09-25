@@ -1,0 +1,51 @@
+---
+# Local lab: a privileged Ubuntu 24.04 container driven by tests/lab/run.sh.
+# Everything the lab writes stays in tests/lab/.work, never in ~/.ssh.
+lab_dir: "{{ inventory_dir }}/../../tests/lab/.work"
+ssh_key_dir: "{{ lab_dir }}/keys"
+ssh_alias_prefix: traefik-lab
+ssh_client_config: "{{ lab_dir }}/ssh_config"
+ssh_known_hosts_file: "{{ lab_dir }}/known_hosts"
+ansible_ssh_common_args: "-o UserKnownHostsFile={{ ssh_known_hosts_file }}"
+
+# Refuses to run the hardening unless the target is detected as a container
+# (kernel-wide settings would otherwise hit the host running the lab).
+lab_host: true
+
+# The container is unreachable from Let's Encrypt.
+traefik_acme_enabled: false
+
+# Discord is replaced by tests/lab/webhook_sink.py on the Docker gateway.
+lab_gateway: "{{ lookup('ansible.builtin.file', lab_dir + '/gateway') }}"
+discord_webhook_infra: "http://{{ lab_gateway }}:8765/infra"
+discord_webhook_security: "http://{{ lab_gateway }}:8765/security"
+
+# The lab's key stands in for a CI runner's (tests/lab/test_deploy.sh).
+deploy_ci_public_keys:
+  - "{{ lookup('ansible.builtin.file', lab_dir + '/keys/ci.pub') }}"
+
+# A local repository stands in for S3.
+backup_enabled: true
+restic_repository: /var/backups/restic-lab
+
+apps:
+  - name: coucou
+    domains:
+      - "{{ traefik_effective_domain }}"
+    compose_template: apps/coucou/compose.yml.j2
+    auth: basic
+    seed_files:
+      - { src: apps/coucou/index.html, dest: public/index.html }
+  # Deployed through deploy-request from a registry running in the lab.
+  - name: demo
+    domains:
+      - "demo.{{ traefik_effective_domain }}"
+    compose_template: apps/demo/compose.yml.j2
+    image_repos:
+      - localhost:5000/demo
+    initial_image: nginxinc/nginx-unprivileged:1.28-alpine
+    migrate_command: [sh, -c, "echo migration ok"]
+    postgres:
+      enabled: true
+    allowed_cap_add:
+      db: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]

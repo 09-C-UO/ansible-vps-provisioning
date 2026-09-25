@@ -1,0 +1,61 @@
+# Example application: a web image chosen by deploy-request (APP_IMAGE, from
+# release.env) and a PostgreSQL database reachable only by the web service.
+# Copy this directory to start a new application.
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+
+services:
+  web:
+    <<: *hardening
+    image: ${APP_IMAGE:?release.env must set APP_IMAGE}
+    env_file: .env
+    tmpfs:
+      - /tmp
+    # default: outbound access; internal: the database. Traefik's network is
+    # added by Ansible (compose.edge.yml), for this service only.
+    networks:
+      - default
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:{{ app.web.port }}{{ app.web.healthcheck_path }}"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  db:
+    <<: *hardening
+    image: {{ app.postgres.image }}
+    env_file: .env
+    # The entrypoint starts as root to fix the data directory ownership, then
+    # drops to the postgres user: these are the capabilities it needs for that.
+    cap_add: {{ app.allowed_cap_add.db | to_json }}
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  # No route to the outside world: the database only talks to the web service.
+  internal:
+    internal: true
+
+volumes:
+  pgdata: {}

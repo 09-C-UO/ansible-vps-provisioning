@@ -1,0 +1,42 @@
+#!/bin/bash
+# Server metrics: disk, inodes, available memory, load. Compares with the last
+# check and alerts only when the list of problems changes.
+set -euo pipefail
+. /etc/server-health.conf
+STATE=/var/lib/server-health/problems
+
+problems=()
+# Real filesystems only: Docker's overlays and tmpfs mirror the ones below.
+while read -r target pcent ipcent; do
+    pcent=${pcent%\%}
+    ipcent=${ipcent%\%}
+    [ "$pcent" -ge "$DISK_MAX" ] && problems+=("disque $target : ${pcent} % utilisés (seuil $DISK_MAX %)")
+    [[ "$ipcent" =~ ^[0-9]+$ ]] && [ "$ipcent" -ge "$INODE_MAX" ] \
+        && problems+=("inodes $target : ${ipcent} % utilisés (seuil $INODE_MAX %)")
+done < <(df --output=target,pcent,ipcent -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs | tail -n +2)
+
+total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+mem_pct=$((available * 100 / total))
+[ "$mem_pct" -lt "$MEM_MIN" ] && problems+=("mémoire disponible : ${mem_pct} % (seuil $MEM_MIN %)")
+
+cpus=$(nproc)
+load5=$(awk '{print $2}' /proc/loadavg)
+if awk -v l="$load5" -v max="$((cpus * LOAD_PER_CPU))" 'BEGIN {exit !(l > max)}'; then
+    problems+=("charge 5 min : $load5 pour $cpus CPU (seuil $((cpus * LOAD_PER_CPU)))")
+fi
+
+current="$(printf '%s\n' "${problems[@]}")"
+[ ${#problems[@]} -eq 0 ] && current=""
+previous="$(cat "$STATE" 2>/dev/null || true)"
+
+if [ "$current" != "$previous" ]; then
+    if [ -n "$current" ]; then
+        printf '%s\n' "$current" | /usr/local/sbin/notify-discord infra "Serveur : seuil dépassé"
+    else
+        printf '%s\n' "$previous" | /usr/local/sbin/notify-discord infra "Serveur : retour à la normale"
+    fi
+    install -d -m 0700 "$(dirname "$STATE")"
+    printf '%s' "$current" >"$STATE"
+fi
+echo "${current:-ok}"

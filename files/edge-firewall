@@ -1,0 +1,44 @@
+#!/bin/bash
+# Managed by Ansible. With a proxy in front (edge_proxy), the ports Docker
+# publishes accept that proxy's ranges only. UFW cannot do it: Docker's
+# published ports go through FORWARD, not INPUT, so the rules live in
+# DOCKER-USER, which Docker keeps in front of its own.
+#
+# The match is narrow on purpose: new inbound connections to a published port
+# (--ctstate DNAT, original direction). Containers' outbound traffic and the
+# replies to visitors are not affected; neither is the host itself.
+#   edge-firewall start | stop
+set -euo pipefail
+CHAIN=EDGE-ONLY
+RANGES=/etc/edge-firewall/ipv4-ranges
+PORTS=(80 443)
+
+jump() {  # -C, -I or -D
+    iptables "$1" DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctdir ORIGINAL \
+        --ctorigdstport "$2" -j "$CHAIN"
+}
+
+stop() {
+    for port in "${PORTS[@]}"; do
+        while jump -C "$port" 2>/dev/null; do jump -D "$port"; done
+    done
+    iptables -F "$CHAIN" 2>/dev/null || true
+    iptables -X "$CHAIN" 2>/dev/null || true
+}
+
+start() {
+    iptables -N "$CHAIN" 2>/dev/null || iptables -F "$CHAIN"
+    while read -r range; do
+        [ -n "$range" ] && iptables -A "$CHAIN" -s "$range" -j RETURN
+    done <"$RANGES"
+    iptables -A "$CHAIN" -j DROP
+    for port in "${PORTS[@]}"; do
+        jump -C "$port" 2>/dev/null || jump -I "$port"
+    done
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    *) echo "usage: edge-firewall start|stop" >&2; exit 2 ;;
+esac

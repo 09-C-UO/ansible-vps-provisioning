@@ -4,3 +4,9 @@
 # Local SSH material (keys belong in ~/.ssh, never in this repository)
 *.pem
 id_*
+
+# Local lab state (keys, vault, known_hosts)
+tests/lab/.work/
+
+# Python bytecode
+__pycache__/

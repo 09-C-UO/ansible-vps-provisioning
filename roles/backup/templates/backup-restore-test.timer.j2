@@ -1,0 +1,11 @@
+# Managed by Ansible.
+[Unit]
+Description=Schedule backup-restore-test
+
+[Timer]
+OnCalendar={{ backup_restore_test_schedule }}
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

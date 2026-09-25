@@ -1,0 +1,27 @@
+# Managed by Ansible. Route for the {{ app.name }} application.
+http:
+  routers:
+    {{ app.name }}:
+      rule: "{% for domain in app.domains %}Host(`{{ domain }}`){{ ' || ' if not loop.last else '' }}{% endfor %}"
+      entryPoints:
+        - websecure
+      # Headers first, so they are also sent on 401 responses.
+      middlewares:
+        - security-headers@file
+        - rate-limit@file
+{% if app.auth == 'basic' %}
+        - basic-auth@file
+{% endif %}
+      service: {{ app.name }}
+      tls:
+{% if traefik_acme_enabled | bool %}
+        certResolver: le
+{% else %}
+        {}
+{% endif %}
+
+  services:
+    {{ app.name }}:
+      loadBalancer:
+        servers:
+          - url: "http://{{ app.name }}-{{ app.web.service }}:{{ app.web.port }}"

@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Deploy side of the deploy mechanism. Runs as deploy, with no privilege.
+
+  deploy-request <app> <repository>[:tag]@sha256:<digest>   ask for a deploy, wait for the result
+  deploy-request status <app>                              show the last result
+  deploy-request --ssh                                     forced command of the CI key
+                                                           (reads SSH_ORIGINAL_COMMAND)
+
+It only writes a request file; root validates it again and does the work.
+"""
+import json
+import os
+import re
+import secrets
+import sys
+import tempfile
+import time
+
+INBOX = "/var/lib/app-deploy/inbox"
+STATUS_DIR = "/var/lib/app-deploy/status"
+TIMEOUT = 900
+FINAL_STATES = {"success", "failed", "rolled_back", "rollback_failed", "refused", "error"}
+
+APP_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+IMAGE_RE = re.compile(r"^[a-z0-9._/:-]+@sha256:[a-f0-9]{64}$")
+
+
+def read_status(app):
+    try:
+        with open(os.path.join(STATUS_DIR, f"{app}.json"), encoding="utf-8") as handle:
+            return json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def show(status):
+    if status is None:
+        print("no deploy recorded")
+        return
+    for key in ("state", "message", "image", "running", "updated_at"):
+        if status.get(key) is not None:
+            print(f"{key}: {status[key]}")
+    for line in status.get("log") or []:
+        print(f"  | {line}")
+
+
+def request(app, image):
+    if not APP_RE.match(app) or not IMAGE_RE.match(image):
+        sys.exit("usage: deploy-request <app> <repository>[:tag]@sha256:<digest>")
+    request_id = secrets.token_hex(8)
+    # Written under a temporary name then renamed: root never sees half a file.
+    fd, tmp = tempfile.mkstemp(dir=INBOX, prefix=f".{app}.")
+    with os.fdopen(fd, "w", encoding="ascii") as handle:
+        handle.write(f"id={request_id}\nimage={image}\n")
+    os.replace(tmp, os.path.join(INBOX, f"{app}.request"))
+    print(f"request {request_id} queued for {app}, waiting for the result...", flush=True)
+
+    deadline = time.monotonic() + TIMEOUT
+    while time.monotonic() < deadline:
+        status = read_status(app)
+        if status and status.get("id") == request_id and status.get("state") in FINAL_STATES:
+            show(status)
+            sys.exit(0 if status["state"] == "success" else 1)
+        time.sleep(2)
+    sys.exit(f"no result after {TIMEOUT}s; check later with: deploy-request status {app}")
+
+
+def main(argv):
+    if argv[:1] == ["--ssh"]:
+        argv = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+        if argv[:1] == ["deploy-request"]:
+            argv = argv[1:]
+    if len(argv) == 2 and argv[0] == "status" and APP_RE.match(argv[1]):
+        show(read_status(argv[1]))
+    elif len(argv) == 2:
+        request(*argv)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

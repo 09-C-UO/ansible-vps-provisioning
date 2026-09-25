@@ -1,0 +1,16 @@
+# Managed by Ansible. Attaches only the web service to Traefik's network,
+# under a name that cannot collide with another application's.
+services:
+  {{ app.web.service }}:
+    networks:
+{% if web_has_networks is false %}
+      default: {}
+{% endif %}
+      edge:
+        aliases:
+          - {{ app.name }}-{{ app.web.service }}
+
+networks:
+  edge:
+    external: true
+    name: edge

@@ -1,8 +1,15 @@
 ---
-- name: Deploy Traefik with BasicAuth in front of the coucou page
+- name: Deploy Traefik, the single entry point for every application
   hosts: vps
   become: true
-  gather_facts: false
+  # Only the virtualization facts, for host_is_container.
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - "!min"
+    - virtual
+  vars_files:
+    - vars/cloudflare_ips.yml
 
   pre_tasks:
     - name: Verify Docker is part of this deployment
@@ -10,6 +17,19 @@
         that:
           - install_docker | bool
         fail_msg: traefik.yml needs install_docker=true (see hardening.yml).
+        quiet: true
+
+    - name: Verify the edge and certificate settings
+      ansible.builtin.assert:
+        that:
+          - edge_proxy in ['none', 'cloudflare']
+          - acme_challenge in ['http', 'dns']
+          - acme_challenge == 'http' or (acme_dns_provider | length > 0 and acme_dns_env | length > 0)
+          - edge_proxy != 'cloudflare' or (cloudflare_firewall_token | length > 0 and cloudflare_zone_id | length > 0)
+        fail_msg: >-
+          edge_proxy: none|cloudflare (cloudflare needs cloudflare_firewall_token and
+          cloudflare_zone_id); acme_challenge: http|dns (dns needs acme_dns_provider
+          and acme_dns_env).
         quiet: true
 
   tasks:
@@ -21,16 +41,6 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
-
-    - name: Read the deploy account identifiers
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ deploy_user }}"
-
-    - name: Record the deploy uid and gid for the coucou container
-      ansible.builtin.set_fact:
-        deploy_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
-        deploy_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
 
     - name: Create the root-owned Traefik directory
       ansible.builtin.file:
@@ -115,35 +125,63 @@
         mode: '0644'
       loop:
         - { src: traefik.static.yml.j2, dest: traefik.yml }
-        - { src: traefik.dynamic.yml.j2, dest: dynamic.yml }
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
       loop_control:
         label: "{{ item.dest }}"
       notify: Restart Traefik
 
-    - name: Create the coucou content directory owned by deploy
-      ansible.builtin.file:
-        path: "{{ application_root }}/coucou"
-        state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
-        mode: '0750'
-
-    # force: false keeps whatever deploy has pushed since the first run.
-    - name: Publish the initial coucou page
+    # Root only: the DNS API credentials can change the whole zone.
+    - name: Write the DNS API credentials for the ACME challenge
       ansible.builtin.copy:
-        src: files/index.html
-        dest: "{{ application_root }}/coucou/index.html"
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
-        mode: '0644'
-        force: false
+        content: |
+          {% for key, value in acme_dns_env.items() %}
+          {{ key }}={{ value }}
+          {% endfor %}
+        dest: "{{ traefik_root }}/acme-dns.env"
+        owner: root
+        group: root
+        mode: '0600'
+      when: acme_challenge == 'dns'
+      no_log: true
+      notify: Restart Traefik
 
+    - name: Remove the DNS API credentials when they are not used
+      ansible.builtin.file:
+        path: "{{ traefik_root }}/acme-dns.env"
+        state: absent
+      when: acme_challenge != 'dns'
+
+    - name: Create the watched routes directory
+      ansible.builtin.file:
+        path: "{{ traefik_root }}/dynamic"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # Picked up live by the file provider: no restart.
+    - name: Write the shared middlewares and TLS options
+      ansible.builtin.template:
+        src: templates/traefik.common.yml.j2
+        dest: "{{ traefik_root }}/dynamic/_common.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove the single-file routes of earlier versions
+      ansible.builtin.file:
+        path: "{{ traefik_root }}/dynamic.yml"
+        state: absent
+      notify: Restart Traefik
+
+    # remove_orphans drops the coucou container of earlier versions, now an
+    # application of its own (apps.yml).
     - name: Start the Traefik stack
       community.docker.docker_compose_v2:
         project_src: "{{ traefik_root }}"
         state: present
         pull: missing
+        remove_orphans: true
 
     - name: Detect failed BasicAuth logins in the access log
       ansible.builtin.copy:
@@ -152,35 +190,86 @@
         group: root
         mode: '0644'
         content: |
-          # Managed by Ansible. Traefik Common Log Format, HTTP 401 responses.
-          # fail2ban strips the timestamp before matching, leaving "[]".
+          # Managed by Ansible. HTTP 401 responses in Traefik's access log.
           [Definition]
+          {% if edge_proxy == 'cloudflare' %}
+          # JSON lines; fields come in any order, hence the lookahead.
+          failregex = ^(?=.*"DownstreamStatus":401[,}]).*"request_Cf-Connecting-Ip":"<HOST>"
+          {% else %}
+          # Common Log Format. fail2ban strips the timestamp before matching, leaving "[]".
           failregex = ^<HOST> \S+ \S+ \[\] "[^"]*" 401\s
+          {% endif %}
           ignoreregex =
       notify: Restart Fail2ban
 
     # Published Docker ports bypass UFW's INPUT chain, so a UFW ban would not
     # block anything here: the ban goes into DOCKER-USER, which Docker keeps
-    # in front of the traffic it forwards to containers.
+    # in front of the traffic it forwards to containers. Behind Cloudflare the
+    # packets come from Cloudflare, so the ban must be applied at Cloudflare:
+    # a DOCKER-USER ban would block a Cloudflare node and every visitor behind it.
     - name: Ban BasicAuth brute force before it reaches Traefik
       ansible.builtin.copy:
         dest: /etc/fail2ban/jail.d/traefik-auth.local
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
         content: |
           [traefik-auth]
           enabled = true
           backend = polling
           filter = traefik-auth
           logpath = {{ traefik_root }}/logs/access.log
+          {% if edge_proxy == 'cloudflare' %}
+          action = cloudflare-token[cftoken="{{ cloudflare_firewall_token }}", cfzone="{{ cloudflare_zone_id }}"]
+          {% else %}
           action = iptables-allports[name=traefik-auth, chain="DOCKER-USER", blocktype=DROP]
+          {% endif %}
           maxretry = 5
           findtime = 10m
           bantime = 1h
           bantime.increment = true
           ignoreip = 127.0.0.1/8 ::1 {{ ssh_allowed_cidrs | join(' ') }}
       notify: Restart Fail2ban
+
+    - name: Install the edge firewall
+      ansible.builtin.copy:
+        src: "files/{{ item.name }}"
+        dest: "{{ item.dest }}/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: edge-firewall, dest: /usr/local/sbin, mode: '0750' }
+        - { name: edge-firewall.service, dest: /etc/systemd/system, mode: '0644' }
+      loop_control:
+        label: "{{ item.name }}"
+      register: edge_firewall_files
+
+    - name: Create the edge firewall directory
+      ansible.builtin.file:
+        path: /etc/edge-firewall
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Record the ranges allowed to reach the web ports
+      ansible.builtin.copy:
+        content: "{{ (cloudflare_ipv4_ranges if edge_proxy == 'cloudflare' else []) | join('\n') }}\n"
+        dest: /etc/edge-firewall/ipv4-ranges
+        owner: root
+        group: root
+        mode: '0644'
+      register: edge_firewall_ranges
+
+    - name: Apply the edge firewall
+      ansible.builtin.systemd_service:
+        name: edge-firewall.service
+        daemon_reload: "{{ edge_firewall_files.changed }}"
+        enabled: "{{ edge_proxy != 'none' }}"
+        state: >-
+          {{ ('restarted' if edge_firewall_files.changed or edge_firewall_ranges.changed else 'started')
+             if edge_proxy != 'none' else 'stopped' }}
 
     - name: Create the fail2ban systemd drop-in directory
       ansible.builtin.file:
@@ -214,40 +303,9 @@
       notify: Load audit rules
 
   post_tasks:
-    # Handlers run first so a configuration change is live before the checks.
+    # Handlers run first so a configuration change is live before apps.yml.
     - name: Apply pending restarts
       ansible.builtin.meta: flush_handlers
-
-    - name: Check that the page refuses anonymous visitors
-      ansible.builtin.uri:
-        url: "https://{{ traefik_effective_domain }}/"
-        status_code: 401
-        validate_certs: "{{ not (traefik_acme_staging | bool) }}"
-      register: anonymous_check
-      # The first certificate can take a minute to be issued.
-      retries: 18
-      delay: 10
-      until: anonymous_check.status == 401
-      delegate_to: localhost
-      become: false
-
-    - name: Check that the page answers coucou with credentials
-      ansible.builtin.uri:
-        url: "https://{{ traefik_effective_domain }}/"
-        url_username: "{{ traefik_basic_auth_user }}"
-        url_password: "{{ traefik_basic_auth_password }}"
-        force_basic_auth: true
-        return_content: true
-        validate_certs: "{{ not (traefik_acme_staging | bool) }}"
-      register: authenticated_check
-      failed_when: "'coucou' not in authenticated_check.content"
-      delegate_to: localhost
-      become: false
-      no_log: true
-
-    - name: Show the result
-      ansible.builtin.debug:
-        msg: "https://{{ traefik_effective_domain }}/ serves coucou behind BasicAuth ({{ traefik_basic_auth_user }})."
 
   handlers:
     - name: Restart Traefik
@@ -264,3 +322,4 @@
     - name: Load audit rules
       ansible.builtin.command: /usr/sbin/augenrules --load
       changed_when: true
+      when: not host_is_container
