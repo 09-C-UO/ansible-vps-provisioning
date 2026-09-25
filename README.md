@@ -3,7 +3,7 @@
 Provisionne un VPS Ubuntu neuf (22.04+ ; 24.04 recommandé), quel que soit le provider (Linode, Hetzner, OVH, AWS…), **en une seule commande** :
 durcissement sécurité, puis Traefik qui sert une page "coucou" derrière une authentification BasicAuth, en HTTPS Let's Encrypt.
 
-Ce dossier est autonome : il reprend le socle sécurité de `../bootstrap.yml` et `../playbook.yml`, sans monitoring, cron ni Discord.
+Le dépôt est autonome : tout ce qu'il faut est dans ce dossier, plus les deux clés SSH et le vault, qui restent sur ta machine.
 
 ## Démarrage
 

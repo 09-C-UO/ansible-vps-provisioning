@@ -415,7 +415,6 @@
           Architectures: {{ docker_architecture_map[ansible_facts['architecture']] }}
           Signed-By: /etc/apt/keyrings/docker.asc
       when: install_docker | bool
-      register: docker_repository
 
     - name: Install Docker Engine without granting socket access to deploy
       ansible.builtin.apt:
