@@ -1,0 +1,29 @@
+---
+- name: Verify the supported operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_version'] is version('22.04', '>=')
+    fail_msg: This baseline supports Ubuntu 22.04 LTS or newer.
+
+- name: Refuse to run the lab against anything but a container
+  ansible.builtin.assert:
+    that:
+      - host_is_container | bool
+    fail_msg: >-
+      lab_host is set but the target is not detected as a container
+      ({{ ansible_facts['virtualization_type'] | default('unknown') }}).
+      Stopping before kernel-wide settings reach the lab's host.
+  when: lab_host | default(false) | bool
+
+- name: Verify the controller connected through the admin account
+  ansible.builtin.assert:
+    that:
+      - ansible_user == admin_user
+    fail_msg: Run bootstrap.yml first; the hardening playbook must connect as admin.
+
+- name: Verify admin sudo is not passwordless
+  ansible.builtin.stat:
+    path: /etc/sudoers.d/90-ansible-admin
+  register: nopasswd_dropin
+  failed_when: nopasswd_dropin.stat.exists

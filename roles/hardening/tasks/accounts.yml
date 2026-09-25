@@ -1,0 +1,21 @@
+---
+- name: Keep deploy out of all privileged supplementary groups
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    groups: ""
+    append: false
+    password_lock: true
+    shell: /bin/bash
+
+- name: Create the application handoff directory
+  ansible.builtin.file:
+    path: "{{ application_root }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: '0750'
+
+- name: Ensure deploy has no sudoers drop-in
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ deploy_user }}"
+    state: absent

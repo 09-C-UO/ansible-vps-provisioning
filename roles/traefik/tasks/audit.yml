@@ -1,0 +1,11 @@
+---
+- name: Audit changes to the Traefik configuration
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/60-traefik.rules
+    owner: root
+    group: root
+    mode: '0640'
+    content: |
+      ## Managed by Ansible.
+      -w {{ traefik_root }}/ -p wa -k traefik
+  notify: Load audit rules

@@ -1,0 +1,82 @@
+---
+# Docker Engine from its official signed repository. No user is added to the
+# docker group: socket access is root-equivalent.
+
+- name: Verify Docker supports the VPS architecture
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['architecture'] in docker_architecture_map
+    fail_msg: "Unsupported Docker architecture: {{ ansible_facts['architecture'] }}"
+
+- name: Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install Docker's official signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure Docker's official APT source
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ ansible_facts['distribution_release'] }}
+      Components: stable
+      Architectures: {{ docker_architecture_map[ansible_facts['architecture']] }}
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: Install Docker Engine without granting socket access to deploy
+  ansible.builtin.apt:
+    name:
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-ce
+      - docker-ce-cli
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Configure conservative Docker daemon defaults
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      {
+        "live-restore": true,
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        },
+        "no-new-privileges": true,
+        "userland-proxy": false
+      }
+    validate: /usr/bin/dockerd --validate --config-file=%s
+  notify: Restart Docker
+
+- name: Ensure Docker is enabled
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Reassert that deploy has no Docker or sudo group access
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    groups: ""
+    append: false

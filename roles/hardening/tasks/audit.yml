@@ -1,0 +1,35 @@
+---
+# auditd is useless without rules: record changes to identity, privilege,
+# SSH, firewall and Docker configuration, and every command run as root by
+# a logged-in human (sudo). Search with: sudo ausearch -k <key> -i
+# Every watched path must exist when the rules load (handler, end of play).
+- name: Install the audit rules
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/50-ansible-hardening.rules
+    owner: root
+    group: root
+    mode: '0640'
+    content: |
+      ## Managed by Ansible.
+      -w /etc/passwd -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/gshadow -p wa -k identity
+      -w /etc/sudoers -p wa -k privilege
+      -w /etc/sudoers.d/ -p wa -k privilege
+      -w /etc/ssh/sshd_config -p wa -k sshd
+      -w /etc/ssh/sshd_config.d/ -p wa -k sshd
+      -w /home/{{ admin_user }}/.ssh/ -p wa -k ssh_keys
+      -w /home/{{ deploy_user }}/.ssh/ -p wa -k ssh_keys
+      -w /etc/ufw/ -p wa -k firewall
+      -w /etc/fail2ban/ -p wa -k firewall
+      {% if install_docker | bool %}
+      -w /etc/docker/ -p wa -k docker
+      -w /usr/bin/docker -p x -k docker
+      {% endif %}
+      -w /etc/crontab -p wa -k cron
+      -w /etc/cron.d/ -p wa -k cron
+      -w /etc/systemd/system/ -p wa -k systemd
+      -a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_commands
+  notify: Load audit rules

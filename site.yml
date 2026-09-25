@@ -1,8 +1,55 @@
 ---
 # Everything after bootstrap. Safe to re-run at any time (connects as admin).
-- name: Apply the VPS security baseline
-  ansible.builtin.import_playbook: hardening.yml
-- name: Deploy Traefik
-  ansible.builtin.import_playbook: traefik.yml
-- name: Host the applications
-  ansible.builtin.import_playbook: apps.yml
+# One play per layer: handlers stay scoped to their layer and run at its end.
+
+- name: Harden and prepare an Ubuntu application VPS
+  hosts: vps
+  become: true
+  gather_facts: true
+  roles:
+    - role: hardening
+      tags: [hardening]
+    - role: docker
+      tags: [docker]
+      when: install_docker | bool
+
+- name: Deploy Traefik, the single entry point for every application
+  hosts: vps
+  become: true
+  # Only the virtualization facts, for host_is_container.
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - "!min"
+    - virtual
+  roles:
+    - role: traefik
+      tags: [traefik]
+
+- name: Monitor the server and host the applications behind Traefik
+  hosts: vps
+  become: true
+  # Only the virtualization facts, for host_is_container (canary, audit rules).
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - "!min"
+    - virtual
+  roles:
+    - role: notify
+      tags: [notify]
+    - role: monitoring
+      tags: [monitoring]
+    - role: app_deploy
+      tags: [apps, deploy]
+    - role: apps
+      tags: [apps]
+    - role: backup
+      tags: [backup]
+      when: backup_enabled | bool
+    - role: canary
+      tags: [canary]
+    # Last: the AIDE baseline must include everything configured above.
+    - role: integrity
+      tags: [integrity]
+      when: integrity_enabled | bool

@@ -1,0 +1,19 @@
+---
+- name: Load audit rules
+  ansible.builtin.command: /usr/sbin/augenrules --load
+  changed_when: true
+  when: not host_is_container
+
+- name: Reload UFW
+  community.general.ufw:
+    state: reloaded
+
+- name: Restart Fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+
+- name: Restart journald
+  ansible.builtin.service:
+    name: systemd-journald
+    state: restarted

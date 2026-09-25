@@ -1,0 +1,33 @@
+---
+- name: Persist and cap the system journal
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '2755'
+  notify: Restart journald
+
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure persistent journal limits
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/60-ansible-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Journal]
+      Storage=persistent
+      Compress=yes
+      Seal=yes
+      SystemMaxUse=500M
+      RuntimeMaxUse=100M
+      MaxRetentionSec=1month
+  notify: Restart journald

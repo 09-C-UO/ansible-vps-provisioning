@@ -1,0 +1,27 @@
+---
+- name: Configure automatic APT runs
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+- name: Configure unattended security upgrade behavior
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/60ansible-security-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Dpkg::Options {
+         "--force-confdef";
+         "--force-confold";
+      };
+      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "{{ automatic_reboot | bool | lower }}";
+      Unattended-Upgrade::Automatic-Reboot-Time "{{ automatic_reboot_time }}";

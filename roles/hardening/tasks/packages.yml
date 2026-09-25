@@ -1,0 +1,26 @@
+---
+- name: Update the APT cache and install baseline security packages
+  ansible.builtin.apt:
+    name:
+      - apparmor
+      - apparmor-utils
+      - auditd
+      - audispd-plugins
+      - ca-certificates
+      - curl
+      - fail2ban
+      - gnupg
+      - needrestart
+      - sudo
+      - systemd-timesyncd
+      - ufw
+      - unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Apply available package upgrades
+  ansible.builtin.apt:
+    upgrade: safe
+    update_cache: true
+  when: apply_package_upgrades | bool

@@ -1,0 +1,68 @@
+---
+- name: Detect failed BasicAuth logins in the access log
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/filter.d/traefik-auth.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible. HTTP 401 responses in Traefik's access log.
+      [Definition]
+      {% if edge_proxy == 'cloudflare' %}
+      # JSON lines; fields come in any order, hence the lookahead.
+      failregex = ^(?=.*"DownstreamStatus":401[,}]).*"request_Cf-Connecting-Ip":"<HOST>"
+      {% else %}
+      # Common Log Format. fail2ban strips the timestamp before matching, leaving "[]".
+      failregex = ^<HOST> \S+ \S+ \[\] "[^"]*" 401\s
+      {% endif %}
+      ignoreregex =
+  notify: Restart Fail2ban
+
+# Published Docker ports bypass UFW's INPUT chain, so a UFW ban would not
+# block anything here: the ban goes into DOCKER-USER, which Docker keeps
+# in front of the traffic it forwards to containers. Behind Cloudflare the
+# packets come from Cloudflare, so the ban must be applied at Cloudflare:
+# a DOCKER-USER ban would block a Cloudflare node and every visitor behind it.
+- name: Ban BasicAuth brute force before it reaches Traefik
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/traefik-auth.local
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      [traefik-auth]
+      enabled = true
+      backend = polling
+      filter = traefik-auth
+      logpath = {{ traefik_root }}/logs/access.log
+      {% if edge_proxy == 'cloudflare' %}
+      action = cloudflare-token[cftoken="{{ cloudflare_firewall_token }}", cfzone="{{ cloudflare_zone_id }}"]
+      {% else %}
+      action = iptables-allports[name=traefik-auth, chain="DOCKER-USER", blocktype=DROP]
+      {% endif %}
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+      bantime.increment = true
+      ignoreip = 127.0.0.1/8 ::1 {{ ssh_allowed_cidrs | join(' ') }}
+  notify: Restart Fail2ban
+
+- name: Create the fail2ban systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/fail2ban.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# The DOCKER-USER chain only exists once Docker is up.
+- name: Start fail2ban after Docker
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fail2ban.service.d/after-docker.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      After=docker.service
+  notify: Restart Fail2ban

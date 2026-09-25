@@ -1,0 +1,7 @@
+---
+- name: Apply the SSH hardening configuration
+  ansible.builtin.include_role:
+    name: sshd
+  vars:
+    sshd_ports:
+      - "{{ ssh_port }}"

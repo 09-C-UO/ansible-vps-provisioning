@@ -1,0 +1,150 @@
+---
+- name: Install the libraries used to write the htpasswd file
+  ansible.builtin.apt:
+    name:
+      - python3-bcrypt
+      - python3-passlib
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the root-owned Traefik directory
+  ansible.builtin.file:
+    path: "{{ traefik_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Create the ACME storage directory for the Traefik user
+  ansible.builtin.file:
+    path: "{{ traefik_root }}/acme"
+    state: directory
+    owner: '65534'
+    group: '65534'
+    mode: '0700'
+
+# Traefik refuses an acme.json that is readable by anyone else.
+- name: Create the ACME certificate store
+  ansible.builtin.copy:
+    dest: "{{ traefik_root }}/acme/acme.json"
+    content: ""
+    force: false
+    owner: '65534'
+    group: '65534'
+    mode: '0600'
+
+- name: Create the access log directory for the Traefik user
+  ansible.builtin.file:
+    path: "{{ traefik_root }}/logs"
+    state: directory
+    owner: '65534'
+    group: '65534'
+    mode: '0750'
+
+# Created up front so the fail2ban jail can start before the first request.
+- name: Create the access log file
+  ansible.builtin.copy:
+    dest: "{{ traefik_root }}/logs/access.log"
+    content: ""
+    force: false
+    owner: '65534'
+    group: '65534'
+    mode: '0640'
+
+- name: Rotate the Traefik access log
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/traefik
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      {{ traefik_root }}/logs/access.log {
+          su nobody nogroup
+          daily
+          rotate 14
+          compress
+          delaycompress
+          missingok
+          notifempty
+          copytruncate
+      }
+
+- name: Write the BasicAuth users file
+  community.general.htpasswd:
+    path: "{{ traefik_root }}/users.htpasswd"
+    name: "{{ traefik_basic_auth_user }}"
+    password: "{{ traefik_basic_auth_password }}"
+    crypt_scheme: bcrypt
+    owner: root
+    group: '65534'
+    mode: '0640'
+  no_log: true
+  notify: Restart Traefik
+
+- name: Write the Traefik configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ traefik_root }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { src: traefik.static.yml.j2, dest: traefik.yml }
+    - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: Restart Traefik
+
+# Root only: the DNS API credentials can change the whole zone.
+- name: Write the DNS API credentials for the ACME challenge
+  ansible.builtin.copy:
+    content: |
+      {% for key, value in acme_dns_env.items() %}
+      {{ key }}={{ value }}
+      {% endfor %}
+    dest: "{{ traefik_root }}/acme-dns.env"
+    owner: root
+    group: root
+    mode: '0600'
+  when: acme_challenge == 'dns'
+  no_log: true
+  notify: Restart Traefik
+
+- name: Remove the DNS API credentials when they are not used
+  ansible.builtin.file:
+    path: "{{ traefik_root }}/acme-dns.env"
+    state: absent
+  when: acme_challenge != 'dns'
+
+- name: Create the watched routes directory
+  ansible.builtin.file:
+    path: "{{ traefik_root }}/dynamic"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Picked up live by the file provider: no restart.
+- name: Write the shared middlewares and TLS options
+  ansible.builtin.template:
+    src: traefik.common.yml.j2
+    dest: "{{ traefik_root }}/dynamic/_common.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Remove the single-file routes of earlier versions
+  ansible.builtin.file:
+    path: "{{ traefik_root }}/dynamic.yml"
+    state: absent
+  notify: Restart Traefik
+
+# remove_orphans drops the coucou container of earlier versions, now an
+# application of its own (roles/apps).
+- name: Start the Traefik stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ traefik_root }}"
+    state: present
+    pull: missing
+    remove_orphans: true

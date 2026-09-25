@@ -1,0 +1,40 @@
+---
+- name: Install the edge firewall
+  ansible.builtin.copy:
+    src: "{{ item.name }}"
+    dest: "{{ item.dest }}/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: edge-firewall, dest: /usr/local/sbin, mode: '0750' }
+    - { name: edge-firewall.service, dest: /etc/systemd/system, mode: '0644' }
+  loop_control:
+    label: "{{ item.name }}"
+  register: edge_firewall_files
+
+- name: Create the edge firewall directory
+  ansible.builtin.file:
+    path: /etc/edge-firewall
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Record the ranges allowed to reach the web ports
+  ansible.builtin.copy:
+    content: "{{ (cloudflare_ipv4_ranges if edge_proxy == 'cloudflare' else []) | join('\n') }}\n"
+    dest: /etc/edge-firewall/ipv4-ranges
+    owner: root
+    group: root
+    mode: '0644'
+  register: edge_firewall_ranges
+
+- name: Apply the edge firewall
+  ansible.builtin.systemd_service:
+    name: edge-firewall.service
+    daemon_reload: "{{ edge_firewall_files.changed }}"
+    enabled: "{{ edge_proxy != 'none' }}"
+    state: >-
+      {{ ('restarted' if edge_firewall_files.changed or edge_firewall_ranges.changed else 'started')
+         if edge_proxy != 'none' else 'stopped' }}

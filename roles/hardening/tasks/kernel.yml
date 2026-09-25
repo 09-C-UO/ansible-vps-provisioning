@@ -1,0 +1,100 @@
+---
+- name: Configure kernel and network hardening
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-ansible-hardening.conf
+    reload: true
+  # net.ipv4/net.ipv6 keys are per network namespace; every other key is
+  # kernel-wide and would change the lab's host through a container.
+  when: not host_is_container or item.key is match('net\.ipv[46]\.')
+  loop_control:
+    label: "{{ item.key }}"
+  loop:
+    - { key: fs.protected_hardlinks, value: '1' }
+    - { key: fs.protected_symlinks, value: '1' }
+    - { key: kernel.dmesg_restrict, value: '1' }
+    - { key: kernel.kptr_restrict, value: '2' }
+    - { key: kernel.randomize_va_space, value: '2' }
+    - { key: kernel.yama.ptrace_scope, value: '1' }
+    - { key: net.ipv4.conf.all.accept_redirects, value: '0' }
+    - { key: net.ipv4.conf.default.accept_redirects, value: '0' }
+    - { key: net.ipv4.conf.all.accept_source_route, value: '0' }
+    - { key: net.ipv4.conf.default.accept_source_route, value: '0' }
+    - { key: net.ipv4.conf.all.rp_filter, value: '2' }
+    - { key: net.ipv4.conf.default.rp_filter, value: '2' }
+    - { key: net.ipv4.icmp_echo_ignore_broadcasts, value: '1' }
+    - { key: net.ipv4.tcp_syncookies, value: '1' }
+    - { key: net.ipv6.conf.all.accept_redirects, value: '0' }
+    - { key: net.ipv6.conf.default.accept_redirects, value: '0' }
+    # Hardening v2 (Lynis KRNL-6000). Deliberately NOT applied because they
+    # break Docker: net.ipv4.conf.all.forwarding=0, kernel.modules_disabled=1.
+    # kernel.perf_event_paranoid keeps Ubuntu's stricter default (4).
+    - { key: dev.tty.ldisc_autoload, value: '0' }
+    - { key: fs.protected_fifos, value: '2' }
+    - { key: fs.protected_regular, value: '2' }
+    - { key: fs.suid_dumpable, value: '0' }
+    - { key: kernel.core_uses_pid, value: '1' }
+    - { key: kernel.sysrq, value: '0' }
+    - { key: kernel.unprivileged_bpf_disabled, value: '1' }
+    - { key: net.core.bpf_jit_harden, value: '2' }
+    - { key: net.ipv4.conf.all.log_martians, value: '1' }
+    - { key: net.ipv4.conf.default.log_martians, value: '1' }
+    - { key: net.ipv4.conf.all.send_redirects, value: '0' }
+    - { key: net.ipv4.conf.default.send_redirects, value: '0' }
+    - { key: net.ipv4.icmp_ignore_bogus_error_responses, value: '1' }
+
+- name: Disable rarely used network protocols with a history of kernel flaws
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/ansible-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (Lynis NETW-3200).
+      blacklist dccp
+      install dccp /bin/false
+      blacklist sctp
+      install sctp /bin/false
+      blacklist rds
+      install rds /bin/false
+      blacklist tipc
+      install tipc /bin/false
+
+- name: Disable core dumps for every user
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/60-ansible-no-core.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (Lynis KRNL-5820).
+      * hard core 0
+      * soft core 0
+
+- name: Make new files private to their owner and group by default
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^UMASK\s'
+    line: "UMASK\t\t027"
+
+- name: Restrict the sudoers drop-in directory
+  ansible.builtin.file:
+    path: /etc/sudoers.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Install a legal warning banner
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Authorized access only. All activity on this system is logged and monitored.
+  loop:
+    - /etc/issue
+    - /etc/issue.net

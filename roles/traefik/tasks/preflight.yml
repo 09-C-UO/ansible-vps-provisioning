@@ -1,0 +1,23 @@
+---
+- name: Verify Docker is part of this deployment
+  ansible.builtin.assert:
+    that:
+      - install_docker | bool
+    fail_msg: The traefik role needs install_docker=true (see roles/docker).
+    quiet: true
+
+- name: Verify the edge and certificate settings
+  ansible.builtin.assert:
+    that:
+      - edge_proxy in ['none', 'cloudflare']
+      - acme_challenge in ['http', 'dns']
+      - acme_challenge == 'http' or (acme_dns_provider | length > 0 and acme_dns_env | length > 0)
+      - edge_proxy != 'cloudflare' or (cloudflare_firewall_token | length > 0 and cloudflare_zone_id | length > 0)
+    fail_msg: >-
+      edge_proxy: none|cloudflare (cloudflare needs cloudflare_firewall_token and
+      cloudflare_zone_id); acme_challenge: http|dns (dns needs acme_dns_provider
+      and acme_dns_env).
+    quiet: true
+
+- name: Load the Cloudflare IP ranges
+  ansible.builtin.include_vars: cloudflare_ips.yml

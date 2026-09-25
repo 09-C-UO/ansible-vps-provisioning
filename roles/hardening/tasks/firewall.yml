@@ -1,0 +1,63 @@
+---
+- name: Ensure UFW manages IPv6 too
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^IPV6='
+    line: IPV6=yes
+  notify: Reload UFW
+
+- name: Set the default inbound firewall policy
+  community.general.ufw:
+    direction: incoming
+    default: deny
+
+- name: Set the default outbound firewall policy
+  community.general.ufw:
+    direction: outgoing
+    default: allow
+
+- name: Allow SSH from configured trusted networks
+  community.general.ufw:
+    rule: limit
+    port: "{{ ssh_port }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: Managed SSH access
+  loop: "{{ ssh_allowed_cidrs }}"
+  when: ssh_allowed_cidrs | length > 0
+
+- name: Allow rate-limited SSH globally when no trusted network is configured
+  community.general.ufw:
+    rule: limit
+    port: "{{ ssh_port }}"
+    proto: tcp
+    comment: Managed SSH access
+  when: ssh_allowed_cidrs | length == 0
+
+- name: Allow explicitly configured public TCP ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: tcp
+    comment: Managed public service
+  loop: "{{ public_tcp_ports }}"
+
+# UFW applies its own sysctl file whenever it starts or reloads, after the
+# system's: its log_martians=0 would silently undo the setting above.
+- name: Keep UFW from turning martian logging back off
+  ansible.builtin.lineinfile:
+    path: /etc/ufw/sysctl.conf
+    regexp: '^net/ipv4/conf/{{ item }}/log_martians='
+    line: "net/ipv4/conf/{{ item }}/log_martians=1"
+  loop:
+    - all
+    - default
+  notify: Reload UFW
+
+- name: Enable UFW logging
+  community.general.ufw:
+    logging: low
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled

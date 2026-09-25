@@ -1,0 +1,22 @@
+---
+# Traefik: the single HTTP(S) entry point, its certificates, the BasicAuth
+# brute-force ban and the edge firewall (Cloudflare-only web ports).
+
+- name: Check the edge and certificate settings
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Configure and start Traefik
+  ansible.builtin.import_tasks: config.yml
+
+- name: Ban BasicAuth brute force
+  ansible.builtin.import_tasks: fail2ban.yml
+
+- name: Restrict the web ports at the edge
+  ansible.builtin.import_tasks: edge_firewall.yml
+
+- name: Audit the Traefik configuration
+  ansible.builtin.import_tasks: audit.yml
+
+# Handlers run now so a configuration change is live before the applications.
+- name: Apply pending restarts
+  ansible.builtin.meta: flush_handlers

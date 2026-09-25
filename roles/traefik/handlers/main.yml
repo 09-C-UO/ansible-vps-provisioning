@@ -1,0 +1,16 @@
+---
+- name: Restart Traefik
+  community.docker.docker_compose_v2:
+    project_src: "{{ traefik_root }}"
+    state: restarted
+
+- name: Restart Fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+    daemon_reload: true
+
+- name: Load audit rules
+  ansible.builtin.command: /usr/sbin/augenrules --load
+  changed_when: true
+  when: not host_is_container

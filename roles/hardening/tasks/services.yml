@@ -1,0 +1,14 @@
+---
+- name: Ensure baseline security services are enabled
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  # auditd, AppArmor and the clock are kernel-wide: not managed from a container.
+  when: not host_is_container or item in ['fail2ban', 'unattended-upgrades']
+  loop:
+    - apparmor
+    - auditd
+    - fail2ban
+    - systemd-timesyncd
+    - unattended-upgrades
