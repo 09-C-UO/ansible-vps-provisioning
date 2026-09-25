@@ -8,6 +8,7 @@
 | [BACKUP.md](BACKUP.md) | sauvegardes chiffrées, protection contre la suppression, restauration |
 | [CANARY.md](CANARY.md) | faux secrets (canary tokens) : création, emplacement, test, conduite à tenir en cas d'alerte |
 | [OPTIONS.md](OPTIONS.md) | WireGuard et clés FIDO2 : conception, pas encore activés |
+| [ROADMAP.md](ROADMAP.md) | état de chaque couche de défense (en place, conçue, à faire), par phase d'attaque, et références |
 
 ## En discussion : logs externes
 
