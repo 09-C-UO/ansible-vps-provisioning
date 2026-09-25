@@ -94,9 +94,11 @@ La règle générale : **ce qui décide de ce qui s'exécute appartient à root,
 provision.sh -i inventories/<env> <IP>
  ├─ bootstrap.yml     une seule fois : comptes, SSH 22 → 22222, root fermé
  └─ site.yml          idempotent, relançable à volonté (connexion admin)
-     ├─ hardening.yml    système, SSH, pare-feu, audit, Docker
-     ├─ traefik.yml      point d'entrée HTTP, bordure (Cloudflare, ACME)
-     └─ apps.yml         rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
+     ├─ play hardening   rôles hardening (système, SSH, pare-feu, audit) et docker
+     ├─ play traefik     rôle traefik (point d'entrée HTTP, bordure Cloudflare, ACME)
+     └─ play apps        rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
 ```
+
+Un play par couche : les handlers d'une couche s'exécutent à sa fin, avant la suivante. La table des rôles est dans le [README](../README.md#structure-du-dépôt).
 
 Les environnements sont des inventaires (`inventories/test`, `inventories/prod`, `inventories/lab`). Chacun a son `group_vars/vps/main.yml` et son vault, et `group_vars/all/main.yml` porte les valeurs par défaut.

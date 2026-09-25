@@ -64,12 +64,35 @@ provision.sh
  │   ├─ [admin:22]     sshd écoute sur 22 et 22222, empreinte ajoutée pour [IP]:22222
  │   └─ [admin:22222]  fermeture du 22, verrouillage de root, retrait de la clé de bootstrap
  └─ site.yml
-     ├─ hardening.yml
-     ├─ traefik.yml
-     └─ apps.yml        rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
+     ├─ play hardening  rôles hardening, docker
+     ├─ play traefik    rôle traefik
+     └─ play apps       rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
 ```
 
 Root et le port 22 ne sont fermés qu'après vérification de l'accès admin sur le nouveau port.
+
+## Structure du dépôt
+
+Deux playbooks à la racine, tout le reste dans des rôles. Chaque rôle suit la structure standard (`tasks/`, `handlers/`, `defaults/`, `vars/`, `templates/`, `files/`) ; `tasks/main.yml` liste ses étapes dans l'ordre.
+
+| Chemin | Rôle |
+|---|---|
+| `bootstrap.yml` | une seule fois, serveur neuf : comptes, SSH 22 → `ssh_port`, root fermé |
+| `site.yml` | tout le reste, idempotent ; un tag par rôle (`--tags traefik`, `--tags apps`...) |
+| `provision.sh`, `justfile` | points d'entrée : `just` liste les commandes |
+| `inventories/<env>/` | un environnement : `hosts.ini`, `group_vars/vps/main.yml`, vault |
+| `group_vars/all/main.yml` | valeurs par défaut communes à tous les environnements |
+| `roles/sshd/` | configuration sshd et changement de port (bootstrap et hardening) |
+| `roles/hardening/` | paquets, mises à jour, noyau, auditd, UFW, fail2ban, journald |
+| `roles/docker/` | Docker Engine depuis le dépôt officiel, sans groupe `docker` |
+| `roles/traefik/` | Traefik, ACME, BasicAuth, pare-feu de bordure Cloudflare |
+| `roles/notify/`, `roles/monitoring/` | alertes Discord, métriques et connexions SSH |
+| `roles/app_deploy/`, `roles/apps/` | déploiement sans privilège, applications et contrôle de leur compose |
+| `roles/backup/`, `roles/integrity/`, `roles/canary/` | restic, AIDE/rkhunter, faux secrets |
+| `apps/` | modèles compose des applications (déclarées dans l'inventaire) |
+| `scripts/` | outils de poste de travail : `vault-pass.sh`, `backup-prune.sh` |
+| `tests/` | lint compose (`just check`) et labo Docker complet (`just lab`) |
+| `docs/` | documentation détaillée |
 
 ## Comptes
 
