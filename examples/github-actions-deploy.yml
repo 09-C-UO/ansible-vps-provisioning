@@ -1,0 +1,47 @@
+# Example: build, push to GHCR, then ask the server to deploy that exact digest.
+# Copy to .github/workflows/deploy.yml in the application's repository.
+#
+# Repository secrets:
+#   DEPLOY_SSH_KEY     private key whose public half is in deploy_ci_public_keys
+#   DEPLOY_HOST        server address
+#   DEPLOY_KNOWN_HOSTS output of: ssh-keyscan -p 22222 <server>
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      # The forced command on the server only accepts "deploy-request <app> <image@digest>".
+      - name: Deploy
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -p 22222 deploy@${{ secrets.DEPLOY_HOST }} \
+            deploy-request monapp "${IMAGE,,}"
