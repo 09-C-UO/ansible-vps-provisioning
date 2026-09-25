@@ -326,7 +326,7 @@ Le DNS pointe directement vers le serveur (enregistrement A ; chez Cloudflare, m
 
 **Ce que ça fait.**
 
-1. **80/443 n'acceptent que Cloudflare** : l'unité `edge-firewall` place les plages publiées par Cloudflare (`vars/cloudflare_ips.yml`) dans `DOCKER-USER`. La règle ne vise que les **nouvelles connexions entrantes vers un port publié** (`--ctstate DNAT --ctdir ORIGINAL`) : le trafic sortant des conteneurs et les réponses aux visiteurs ne sont pas touchés. Sans cette restriction, un attaquant qui connaît l'IP du serveur contournerait Cloudflare (WAF, anti-DDoS) en s'y connectant directement.
+1. **80/443 n'acceptent que Cloudflare** : l'unité `edge-firewall` place les plages publiées par Cloudflare (`roles/traefik/vars/cloudflare_ips.yml`) dans `DOCKER-USER`. La règle ne vise que les **nouvelles connexions entrantes vers un port publié** (`--ctstate DNAT --ctdir ORIGINAL`) : le trafic sortant des conteneurs et les réponses aux visiteurs ne sont pas touchés. Sans cette restriction, un attaquant qui connaît l'IP du serveur contournerait Cloudflare (WAF, anti-DDoS) en s'y connectant directement.
 2. **Vraie IP du visiteur** : Traefik ne fait confiance aux en-têtes `X-Forwarded-*` que s'ils viennent des plages Cloudflare (`forwardedHeaders.trustedIPs`). L'access log passe en JSON pour enregistrer `CF-Connecting-IP`, fixé par Cloudflare. `X-Forwarded-For`, lui, peut contenir des adresses choisies par le visiteur : l'utiliser permettrait à un attaquant de faire bannir l'IP de quelqu'un d'autre.
 3. **Bans via l'API Cloudflare** : la jail `traefik-auth` utilise l'action `cloudflare-token`. Un ban dans `DOCKER-USER` bloquerait un nœud Cloudflare, et avec lui tous les visiteurs qui passent par ce nœud.
 
@@ -354,7 +354,7 @@ Détail complet : [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ### 11.1 Lint du fichier compose
 
-**Ce que ça fait.** Avant tout déploiement, Ansible analyse le compose de chaque application (`filter_plugins/app_compose.py`) et refuse : `privileged`, les espaces de noms de l'hôte (`network_mode`/`pid`/`ipc`/`uts`/`userns_mode: host`), les ports publiés, les périphériques, `container_name`, l'absence de `cap_drop: [ALL]`, les capacités ajoutées sans être déclarées dans `allowed_cap_add`, `seccomp`/`apparmor` `unconfined`, le montage du socket Docker, tout montage de l'hôte hors de `/opt/apps/<app>` et `/srv/apps/<app>`, et la déclaration du réseau `edge`.
+**Ce que ça fait.** Avant tout déploiement, Ansible analyse le compose de chaque application (`roles/apps/filter_plugins/app_compose.py`) et refuse : `privileged`, les espaces de noms de l'hôte (`network_mode`/`pid`/`ipc`/`uts`/`userns_mode: host`), les ports publiés, les périphériques, `container_name`, l'absence de `cap_drop: [ALL]`, les capacités ajoutées sans être déclarées dans `allowed_cap_add`, `seccomp`/`apparmor` `unconfined`, le montage du socket Docker, tout montage de l'hôte hors de `/opt/apps/<app>` et `/srv/apps/<app>`, et la déclaration du réseau `edge`.
 
 **Contre quoi.** Le compose est exécuté par root. Une seule ligne recopiée d'un tutoriel (`privileged: true`, `- /var/run/docker.sock:...`) suffit à donner l'hôte à l'application. Le lint rend l'erreur bloquante au lieu de silencieuse.
 

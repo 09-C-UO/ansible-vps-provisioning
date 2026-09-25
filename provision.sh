@@ -63,14 +63,14 @@ if ! head -n 1 "$VAULT_FILE" 2>/dev/null | grep -q '^\$ANSIBLE_VAULT'; then
 fi
 
 # The vault password is typed once and handed to every ansible command through
-# vault-pass.sh, which only echoes this environment variable.
+# scripts/vault-pass.sh, which only echoes this environment variable.
 # Already set by an automated caller (tests/lab/run.sh): not asked again.
 if [ -z "${TRAEFIK_ANSIBLE_VAULT_PASS:-}" ]; then
     read -rsp "Ansible vault password: " TRAEFIK_ANSIBLE_VAULT_PASS
     echo
 fi
 export TRAEFIK_ANSIBLE_VAULT_PASS
-VAULT_ARGS=(--vault-password-file ./vault-pass.sh)
+VAULT_ARGS=(--vault-password-file ./scripts/vault-pass.sh)
 
 if ! ansible-vault view "${VAULT_ARGS[@]}" "$VAULT_FILE" >/dev/null 2>&1; then
     echo "Wrong vault password." >&2

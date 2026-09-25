@@ -20,7 +20,7 @@
     app_compose_text: "{{ lookup('ansible.builtin.template', app.compose_template) }}"
 
 # The compose file runs as root: refuse anything that would give the
-# application a way out of its containers (see filter_plugins/app_compose.py).
+# application a way out of its containers (see roles/apps/filter_plugins/app_compose.py).
 - name: "Check that {{ app.name }} respects the hosting model"
   vars:
     app_lint: >-

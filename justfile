@@ -46,8 +46,8 @@ status prefix app:
 check:
     python3 tests/test_compose_lint.py
     ansible-playbook --syntax-check -i inventories/test/hosts.ini bootstrap.yml site.yml
-    for f in provision.sh tests/lab/*.sh scripts/*.sh files/edge-firewall; do bash -n "$f"; done
-    rm -rf filter_plugins/__pycache__
+    for f in provision.sh tests/lab/*.sh scripts/*.sh roles/traefik/files/edge-firewall; do bash -n "$f"; done
+    rm -rf roles/apps/filter_plugins/__pycache__
 
 # Labo Docker complet : conteneur neuf, provision, idempotence, tests
 lab:

@@ -56,7 +56,7 @@ app_secrets:
     POSTGRES_PASSWORD: lab-postgres-password
 VAULT
     rm -f "$VAULT_FILE"
-    ansible-vault encrypt --vault-password-file "$REPO_DIR/vault-pass.sh" \
+    ansible-vault encrypt --vault-password-file "$REPO_DIR/scripts/vault-pass.sh" \
         --output "$VAULT_FILE" "$WORK/secrets.plain.yml"
     rm -f "$WORK/secrets.plain.yml"
     chmod 600 "$VAULT_FILE"
@@ -119,7 +119,7 @@ provision() {
 site() {
     prepare_work
     (cd "$REPO_DIR" && ansible-playbook site.yml -i "$INVENTORY/hosts.ini" \
-        -e "ansible_host=$(lab_ip)" --vault-password-file ./vault-pass.sh "$@")
+        -e "ansible_host=$(lab_ip)" --vault-password-file ./scripts/vault-pass.sh "$@")
 }
 
 idempotence() {

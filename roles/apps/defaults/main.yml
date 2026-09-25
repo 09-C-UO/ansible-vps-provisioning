@@ -2,7 +2,7 @@
 # Values every entry of `apps` starts from (merged recursively).
 app_defaults:
   domains: []
-  auth: none                 # none | basic (shared BasicAuth user, see traefik.yml)
+  auth: none                 # none | basic (shared BasicAuth user, see roles/traefik)
   web:
     service: web
     port: 8080

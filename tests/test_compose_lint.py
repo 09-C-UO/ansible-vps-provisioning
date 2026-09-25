@@ -1,10 +1,10 @@
-"""Unit tests for filter_plugins/app_compose.py. Run: python3 tests/test_compose_lint.py"""
+"""Unit tests for roles/apps/filter_plugins/app_compose.py. Run: python3 tests/test_compose_lint.py"""
 import copy
 import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "filter_plugins"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "apps", "filter_plugins"))
 from app_compose import compose_violations  # noqa: E402
 
 APP = {
