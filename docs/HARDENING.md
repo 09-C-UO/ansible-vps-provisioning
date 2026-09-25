@@ -390,6 +390,32 @@ Détail complet : [DEPLOYMENT.md](DEPLOYMENT.md).
 
 **Écarté.** Les tests de processus cachés et de fichiers supprimés encore ouverts : Docker et containerd en produisent en permanence, par conception. Un rapport qui crie au loup chaque semaine finit par ne plus être lu.
 
+### 12.3 Secrets pièges (honeytokens)
+
+Guide complet (création, emplacement, test, conduite à tenir en cas d'alerte) : [CANARY.md](CANARY.md).
+
+**Ce que ça fait.** Le rôle `canary` dépose, en root 0600, de faux secrets déclarés dans le vault (`canary_files`) : par exemple de fausses clés AWS dans `/root/.aws/credentials`. Leur contenu vient de [canarytokens.org](https://canarytokens.org) (Thinkst, gratuit) : dès que quelqu'un **utilise** ces clés, Thinkst envoie un e-mail, depuis l'extérieur. Une règle auditd enregistre en plus quel humain connecté (`auid`) a **lu** le fichier.
+
+**Contre quoi.** L'intrus qui fouille le serveur à la recherche de secrets à réutiliser, une étape presque systématique après une intrusion. AIDE voit ce qu'il modifie, pas ce qu'il lit ; l'alerte de connexion admin ne voit pas un intrus entré par une application. Aucun usage légitime ne touche ces fichiers : une alerte est une intrusion, pas un faux positif. Et comme l'alerte part de chez Thinkst, un root qui aurait coupé les alertes locales ou vidé les journaux ne peut pas l'empêcher.
+
+**Mise en place.**
+1. Sur canarytokens.org : type **AWS keys**, ton e-mail et une note (« app-prod /root/.aws »). Le site fournit un bloc `[default]` avec les clés.
+2. Dans le vault de l'environnement :
+   ```yaml
+   canary_files:
+     - path: /root/.aws/credentials
+       content: |
+         [default]
+         aws_access_key_id = AKIA...
+         aws_secret_access_key = ...
+   ```
+3. `just tags prod <IP> canary`, puis accepter le nouveau fichier dans AIDE (il y apparaît une fois comme ajouté) : `just aide-accept prod <IP>`.
+4. Tester : le site canarytokens.org indique comment déclencher le token (par exemple `aws sts get-caller-identity` avec ces clés, depuis ton poste) ; l'e-mail doit arriver.
+
+**Vérifier (sur le serveur).** `sudo ls -l /root/.aws/credentials` (root, 0600) ; `sudo ausearch -k canary -i` liste les lectures humaines.
+
+**Écarté.** Un honeypot classique (faux service exposé, type Cowrie) : il enregistre surtout les robots qui scannent tout Internet, ce que fail2ban montre déjà, et il ajoute un logiciel exposé exprès sur la machine de production. À réserver à un VPS séparé et jetable, pour apprendre. Limite des honeytokens : ils ne détectent que l'intrus qui fouille et réutilise ce qu'il trouve, pas un robot de minage qui ne regarde rien (la surveillance de la charge, §14.2, couvre ce cas).
+
 ---
 
 ## 13. Sauvegardes

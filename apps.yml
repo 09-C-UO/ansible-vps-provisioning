@@ -2,7 +2,12 @@
 - name: Monitor the server and host the applications behind Traefik
   hosts: vps
   become: true
-  gather_facts: false
+  # Only the virtualization facts, for host_is_container (canary, audit rules).
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - "!min"
+    - virtual
   roles:
     - role: notify
       tags: [notify]
@@ -15,6 +20,8 @@
     - role: backup
       tags: [backup]
       when: backup_enabled | bool
+    - role: canary
+      tags: [canary]
     # Last: the AIDE baseline must include everything configured above.
     - role: integrity
       tags: [integrity]

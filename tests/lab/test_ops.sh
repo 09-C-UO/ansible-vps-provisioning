@@ -41,6 +41,12 @@ check "the alert went to the security channel" "grep 'lab-intruder' '$WORK/webho
 echo 'rm -f /etc/lab-intruder' | as_root
 check "rkhunter runs without error" "echo 'systemctl start rkhunter-check.service' | as_root"
 
+echo "== Decoy secrets"
+check "the decoy exists, root-only" \
+    "echo 'stat -c \"%U %a\" /root/.aws/credentials' | as_root | grep -qx 'root 600'"
+check "deploy cannot read it" "! '$RUN' deploy 'cat /root/.aws/credentials' >/dev/null 2>&1"
+check "AIDE does not report it" "! echo 'aide --config /etc/aide/aide.conf --check' | as_root | grep -q '/root/.aws'"
+
 echo "== Server monitoring"
 check "an admin SSH login alerts the security channel" \
     "grep 'Connexion SSH : admin' '$WORK/webhooks.log' | grep -q '\"channel\": \"security\"'"

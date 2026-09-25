@@ -1,0 +1,62 @@
+---
+- name: Validate the decoy paths
+  ansible.builtin.assert:
+    that:
+      - item.path is match('^/')
+      - "'..' not in item.path"
+      - item.content | default('') | length > 0
+    fail_msg: "canary_files: absolute path without '..' and non-empty content required ({{ item.path | default('?') }})"
+    quiet: true
+  loop: "{{ canary_files }}"
+  loop_control:
+    label: "{{ item.path | default('?') }}"
+
+- name: Create the directories of the decoys
+  ansible.builtin.file:
+    path: "{{ item.path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: "{{ canary_files }}"
+  loop_control:
+    label: "{{ item.path | dirname }}"
+  # Existing system directories (e.g. /etc) keep their own permissions.
+  when: item.path | dirname not in ['/', '/etc', '/root', '/opt', '/srv', '/var', '/usr', '/home']
+
+# Readable by root only, like a real secret: finding it requires root access,
+# which is exactly the situation it is meant to reveal.
+- name: Place the decoy secrets
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ canary_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  no_log: true
+
+# Forensic trace, not an alert: which logged-in human (auid survives sudo)
+# read a decoy. Services (AIDE, backups) have no auid and are not recorded.
+- name: Record every human read of the decoys
+  ansible.builtin.copy:
+    content: |
+      ## Managed by Ansible. Search with: sudo ausearch -k canary -i
+      {% for item in canary_files %}
+      -a always,exit -F arch=b64 -F path={{ item.path }} -F perm=r -F auid>=1000 -F auid!=unset -k canary
+      {% endfor %}
+    dest: /etc/audit/rules.d/70-canary.rules
+    owner: root
+    group: root
+    mode: '0640'
+  when: canary_files | length > 0
+  notify: Load audit rules
+
+- name: Remove the decoy audit rules when there is no decoy
+  ansible.builtin.file:
+    path: /etc/audit/rules.d/70-canary.rules
+    state: absent
+  when: canary_files | length == 0
+  notify: Load audit rules

@@ -43,6 +43,12 @@ vault_admin_password: "lab-admin-password"
 vault_admin_password_salt: "LabSaltLabSalt16"
 traefik_basic_auth_password: "lab-basic-auth"
 restic_password: "lab-restic-password-000000"
+canary_files:
+  - path: /root/.aws/credentials
+    content: |
+      [default]
+      aws_access_key_id = AKIALABDECOY0000000
+      aws_secret_access_key = lab-decoy-not-a-real-token
 app_secrets:
   demo:
     POSTGRES_USER: demo

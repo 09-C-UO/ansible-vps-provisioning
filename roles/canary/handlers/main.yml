@@ -1,0 +1,6 @@
+---
+- name: Load audit rules
+  ansible.builtin.command: /usr/sbin/augenrules --load
+  changed_when: true
+  # auditd is kernel-wide: never loaded from a container (the lab).
+  when: not host_is_container

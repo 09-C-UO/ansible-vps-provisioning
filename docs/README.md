@@ -6,6 +6,7 @@
 | [HARDENING.md](HARDENING.md) | chaque mesure : effet, menace visée, commande de vérification, ce qui a été écarté |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | déclarer une application, écrire son compose, déployer à la main ou par la CI |
 | [BACKUP.md](BACKUP.md) | sauvegardes chiffrées, protection contre la suppression, restauration |
+| [CANARY.md](CANARY.md) | faux secrets (canary tokens) : création, emplacement, test, conduite à tenir en cas d'alerte |
 | [OPTIONS.md](OPTIONS.md) | WireGuard et clés FIDO2 : conception, pas encore activés |
 
 ## En discussion : logs externes

@@ -31,7 +31,7 @@ Ce dépôt applique une défense en profondeur. Chaque couche suppose que la pr�
 │    et scellé                                             │
 ├──────────────────────────────────────────────────────────┤
 │ 7. Détection : connexion SSH admin, AIDE (quotidien),    │  → alerte Discord #sécurité
-│    rkhunter (hebdomadaire)                               │
+│    rkhunter (hebdomadaire), faux secrets (canarytokens)  │  → e-mail, envoyé de l'extérieur
 ├──────────────────────────────────────────────────────────┤
 │ 8. Sauvegardes chiffrées hors du serveur (restic → S3)   │  dernière ligne : tout reconstruire
 └──────────────────────────────────────────────────────────┘
@@ -96,7 +96,7 @@ provision.sh -i inventories/<env> <IP>
  └─ site.yml          idempotent, relançable à volonté (connexion admin)
      ├─ hardening.yml    système, SSH, pare-feu, audit, Docker
      ├─ traefik.yml      point d'entrée HTTP, bordure (Cloudflare, ACME)
-     └─ apps.yml         rôles notify, monitoring, app_deploy, apps, backup, integrity
+     └─ apps.yml         rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
 ```
 
 Les environnements sont des inventaires (`inventories/test`, `inventories/prod`, `inventories/lab`). Chacun a son `group_vars/vps/main.yml` et son vault, et `group_vars/all/main.yml` porte les valeurs par défaut.

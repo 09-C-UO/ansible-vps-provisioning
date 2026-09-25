@@ -66,7 +66,7 @@ provision.sh
  └─ site.yml
      ├─ hardening.yml
      ├─ traefik.yml
-     └─ apps.yml        rôles notify, monitoring, app_deploy, apps, backup, integrity
+     └─ apps.yml        rôles notify, monitoring, app_deploy, apps, backup, canary, integrity
 ```
 
 Root et le port 22 ne sont fermés qu'après vérification de l'accès admin sur le nouveau port.
@@ -95,7 +95,7 @@ L'accès au socket Docker équivaut à root : aucun utilisateur n'est dans le gr
 | Anti brute-force HTTP | fail2ban sur les 401 de `/opt/traefik/logs/access.log`, bannissement dans `DOCKER-USER` (les ports publiés par Docker contournent UFW), ou via l'API Cloudflare derrière Cloudflare |
 | Applications | compose vérifié avant déploiement (ni `privileged`, ni port publié, ni socket Docker, `cap_drop: ALL`), base sur un réseau interne sans Internet |
 | Déploiement | deploy dépose une demande, un worker root la revalide (dépôt autorisé, digest obligatoire, `O_NOFOLLOW`), déploie et revient en arrière si l'application ne répond pas |
-| Intégrité | AIDE quotidien, rkhunter hebdomadaire, alerte à chaque connexion SSH d'admin, alertes Discord `#security` |
+| Intégrité | AIDE quotidien, rkhunter hebdomadaire, alerte à chaque connexion SSH d'admin, alertes Discord `#security` ; faux secrets (honeytokens canarytokens.org) dont l'usage alerte par e-mail |
 | Surveillance | disque, inodes, mémoire, charge toutes les 5 min ; alerte au dépassement et au retour à la normale |
 | Sauvegardes | restic chiffré vers S3, dumps PostgreSQL, vérification hebdomadaire, restauration testée chaque mois |
 
