@@ -80,6 +80,7 @@ Deux playbooks à la racine, tout le reste dans des rôles. Chaque rôle suit la
 | `bootstrap.yml` | une seule fois, serveur neuf : comptes, SSH 22 → `ssh_port`, root fermé |
 | `site.yml` | tout le reste, idempotent ; un tag par rôle (`--tags traefik`, `--tags apps`...) |
 | `provision.sh`, `justfile` | points d'entrée : `just` liste les commandes |
+| `infra/` | couche provider Scaleway (OpenTofu) : VPS, IP, pare-feu, bucket restic ([INFRA.md](docs/INFRA.md)) |
 | `inventories/<env>/` | un environnement : `hosts.ini`, `group_vars/vps/main.yml`, vault |
 | `group_vars/all/main.yml` | valeurs par défaut communes à tous les environnements |
 | `roles/sshd/` | configuration sshd et changement de port (bootstrap et hardening) |
