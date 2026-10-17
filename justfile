@@ -60,3 +60,35 @@ lab-test:
 # Supprime le conteneur du labo
 lab-down:
     tests/lab/run.sh down
+
+# Infrastructure Scaleway (OpenTofu). Rend le nom du tfvars d'un environnement
+# (infra/<env>.tfvars, sinon infra/prod.tfvars).
+scw_env env:
+    @f="{{env}}.tfvars"; [ -f "infra/$f" ] || f="prod.tfvars"; echo "$f"
+
+# Crée/met à jour le VPS et son pare-feu : just infra-apply prod
+infra-apply env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tofu -chdir=infra apply -var-file="$(just scw_env {{env}})"
+
+# Montre ce qui changerait côté infra : just infra-plan prod
+infra-plan env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tofu -chdir=infra plan -var-file="$(just scw_env {{env}})"
+
+# Crée l'infra puis provisionne avec Ansible : just infra-provision prod
+infra-provision env *args:
+    ./infra/provision.sh {{env}} {{args}}
+
+# Ferme le port 22 du pare-feu après le bootstrap : just close-ssh-22 prod
+close-ssh-22 env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tfvars="$(just scw_env {{env}})"
+    tofu -chdir=infra apply -var-file="$tfvars" -var ssh_22_open=false
+
+# Affiche les sorties (IP, identifiants restic pour le vault)
+infra-outputs:
+    tofu -chdir=infra output

@@ -2,6 +2,7 @@
 
 | Document | Contenu |
 |---|---|
+| [INFRA.md](INFRA.md) | couche provider Scaleway avec OpenTofu : ressources, séquence, secrets, state |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | schéma des couches de défense, chemin d'un visiteur, répartition des fichiers |
 | [HARDENING.md](HARDENING.md) | chaque mesure : effet, menace visée, commande de vérification, ce qui a été écarté |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | déclarer une application, écrire son compose, déployer à la main ou par la CI |

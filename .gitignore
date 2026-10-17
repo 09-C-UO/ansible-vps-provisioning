@@ -10,3 +10,13 @@ tests/lab/.work/
 
 # Python bytecode
 __pycache__/
+
+# OpenTofu (infra/): state, plan et tfvars réels contiennent identifiants et secrets
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*tfplan*
+infra/*.tfvars
+!infra/*.tfvars.example
+infra/crash.log
